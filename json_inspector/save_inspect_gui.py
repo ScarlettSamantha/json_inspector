@@ -61,6 +61,7 @@ class JsonInspector(ThemedTk):
         self.bind_all(sequence="<Control-c>", func=lambda e: self.destroy())
         self.title(string=f"Json Inspector <{path}>")
         self.geometry(newGeometry="1400x900")
+        self._precache: Dict[str, List[Tuple[Any, str, str, bool]]] = {}
 
         self._search_results: List[str] = []
         self._search_idx: int = -1
@@ -82,6 +83,7 @@ class JsonInspector(ThemedTk):
         threading.Thread(target=self._load_data, args=(path,), daemon=True).start()
         self._current_path: str = path
         self.last_save_time: datetime.datetime | None = None
+        threading.Thread(target=self._precache_all, daemon=True).start()
 
     def _get_path_keys(self, iid: str) -> List[str]:
         path: List[str] = []
@@ -339,17 +341,20 @@ class JsonInspector(ThemedTk):
 
     def _init_tree(self) -> None:
         self.loading = False
-
-        self._filemenu.entryconfig(index="Save", state="normal")
-        self._filemenu.entryconfig(index="Save As…", state="normal")
-
-        self.status_label.config(text="Loaded", foreground="green")
-        self.footer_status.config(text="Loaded", foreground="green")
+        self._filemenu.entryconfig("Save", state="normal")
+        self._filemenu.entryconfig("Save As…", state="normal")
         self.loading_label.destroy()
 
         root_text = f"root: ({type(self.data).__name__})"
-        root_id = self.tree.insert("", "end", text=root_text, values=(type(self.data).__name__, ""), open=False)
+        root_id = self.tree.insert("", "end", text=root_text, values=(type(self.data).__name__, ""), open=True)
         self.tree.insert(root_id, "end", text="(loading…)")
+
+        self.tree.focus(root_id)
+        self.tree.selection_set(root_id)
+        self.after(0, lambda: self._on_open(None))
+
+        self.status_label.config(text="Precaching…", foreground="blue")
+        self.footer_status.config(text="Precaching…", foreground="blue")
 
     def _save_file(self) -> None:
         self._write_json(path=self._current_path)
@@ -393,48 +398,93 @@ class JsonInspector(ThemedTk):
 
         self._expanded.add(iid)
         for c in self.tree.get_children(iid):
+            self.tree.delete(c)
+        self.tree.insert(iid, "end", text="(loading…)", values=("",))
+
+        obj = self._get_obj(iid)
+
+        # compute JSON-path key for this iid
+        path_keys = self._get_path_keys(iid)[1:]  # drop the “root” element
+        cache_key = "/".join(map(str, path_keys))
+
+        if cache_key in self._precache:
+            # cached result ready → immediate chunk
+            self._start_chunk(iid, self._precache.pop(cache_key))
+        else:
+            # not cached yet → submit new job
+            future = self._executor.submit(prepare_items, obj)
+            future.add_done_callback(lambda f, iid=iid: self.after(0, lambda: self._start_chunk(iid, f.result())))
+
+    def _precache_all(self) -> None:
+        def walk(obj: Any, path: List[Union[str, int]]) -> None:
+            if isinstance(obj, (dict, list, tuple, set)):
+                key = "/".join(map(str, path))
+                future = self._executor.submit(prepare_items, obj)
+                future.add_done_callback(lambda f, key=key: self._precache.setdefault(key, f.result()))
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        walk(v, path + [k])
+                else:
+                    for idx, v in enumerate(obj):
+                        walk(v, path + [idx])
+
+        walk(self.data, [])
+        self.after(
+            200,
+            lambda: (
+                self.status_label.config(text="Loaded", foreground="green"),
+                self.footer_status.config(text="Loaded", foreground="green"),
+            ),
+        )
+
+    def _start_chunk(self, iid: str, items: List[Tuple[Any, str, str, bool]]) -> None:
+        for c in self.tree.get_children(iid):
+            if self.tree.item(c, "text") == "(loading…)":
+                self.tree.delete(c)
+        self._chunk_iter = ((iid, key, typ, val, is_cont) for key, typ, val, is_cont in items)
+        self.after(0, self._process_chunk)
+
+    def _process_chunk(self) -> None:
+        try:
+            parent, key, typ, val, is_cont = next(self._chunk_iter)
+        except StopIteration:
+            # all rows done
+            self.status_label.config(text="Loaded", foreground="green")
+            self.footer_status.config(text="Loaded", foreground="green")
+            return
+
+        # remove any “loading…” placeholder under this parent
+        for c in self.tree.get_children(parent):
             if self.tree.item(c, "text") == "(loading…)":
                 self.tree.delete(c)
 
-        obj = self._get_obj(iid)
-        future: concurrent.futures.Future[List[Tuple[Union[str, int], str, str, bool]]] = self._executor.submit(
-            prepare_items, obj
+        # insert the real row
+        node_id = self.tree.insert(
+            parent,
+            "end",
+            text=str(key),
+            values=(typ, val),
+            tags=("odd",) if self._row_count % 2 else ("even",),
         )
-        future.add_done_callback(lambda f, iid=iid: self.after(0, lambda: self._start_chunk(iid, f.result())))
+        self._row_count += 1
 
-    def _start_chunk(self, iid: str, items: List[Tuple[Any, str, str, bool]]) -> None:
-        self._chunk_queue = [(iid, k, typ, val, is_cont) for k, typ, val, is_cont in items]
-        self._process_chunk()
+        # apply coloring tags
+        color = COLOR_MAP.get(typ)
+        bg = ROW_BG.get(typ)
+        if color or bg:
+            tag = f"t_{typ}"
+            if not self.tree.tag_has(tag):
+                self.tree.tag_configure(tag, foreground=color or "", background=bg or "")
+            existing = list(self.tree.item(node_id, "tags"))
+            existing.append(tag)
+            self.tree.item(node_id, tags=tuple(existing))
 
-    def _process_chunk(self) -> None:
-        batch = 100
-        for _ in range(min(batch, len(self._chunk_queue))):
-            parent, key, typ, val, is_cont = self._chunk_queue.pop(0)
-            node_id: str = self.tree.insert(
-                parent=parent,
-                index="end",
-                text=str(key),
-                values=(typ, val),
-                tags=("odd",) if self._row_count % 2 else ("even",),
-            )
-            self._row_count += 1
+        # if it’s a container, re-add the loading placeholder for its subtree
+        if is_cont:
+            self.tree.insert(node_id, "end", text="(loading…)")
 
-            color: str | None = COLOR_MAP.get(typ)
-            bg: str | None = ROW_BG.get(typ)
-
-            if color or bg:
-                tag: str = f"t_{typ}"
-                if not self.tree.tag_has(tagname=tag):
-                    self.tree.tag_configure(tagname=tag, foreground=color or "", background=bg or "")
-                tags: List[str] = list(self.tree.item(item=node_id, option="tags"))
-                tags.append(tag)
-                self.tree.item(item=node_id, tags=tuple(tags))
-
-            if is_cont:
-                self.tree.insert(parent=node_id, index="end", text="(loading…)")
-
-        if self._chunk_queue:
-            self.after(10, self._process_chunk)
+        # schedule the next single-row insert
+        self.after(1, self._process_chunk)
 
     def _get_obj(self, iid: str) -> Any:
         path: List[str] = []
