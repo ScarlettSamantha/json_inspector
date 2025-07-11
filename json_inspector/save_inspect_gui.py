@@ -253,6 +253,10 @@ class JsonInspector(ThemedTk):
         self.tree.tag_configure("odd", background="#f9f9f9")
         self.tree.tag_configure("even", background="#e0e0e0")
 
+        for typ, color in COLOR_MAP.items():
+            bg = ROW_BG[typ]
+            self.tree.tag_configure(f"t_{typ}", foreground=color, background=bg)
+
         self.tree.bind("<<TreeviewOpen>>", self._on_open)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
@@ -445,45 +449,36 @@ class JsonInspector(ThemedTk):
         self.after(0, self._process_chunk)
 
     def _process_chunk(self) -> None:
-        try:
-            parent, key, typ, val, is_cont = next(self._chunk_iter)
-        except StopIteration:
-            # all rows done
-            self.status_label.config(text="Loaded", foreground="green")
-            self.footer_status.config(text="Loaded", foreground="green")
-            return
+        batch_size = 40
+        for _ in range(batch_size):
+            try:
+                parent, key, typ, val, is_cont = next(self._chunk_iter)
+            except StopIteration:
+                self.status_label.config(text="Loaded", foreground="green")
+                self.footer_status.config(text="Loaded", foreground="green")
+                return
 
-        # remove any “loading…” placeholder under this parent
-        for c in self.tree.get_children(parent):
-            if self.tree.item(c, "text") == "(loading…)":
-                self.tree.delete(c)
+            for c in self.tree.get_children(parent):
+                if self.tree.item(c, "text") == "(loading…)":
+                    self.tree.delete(c)
 
-        # insert the real row
-        node_id = self.tree.insert(
-            parent,
-            "end",
-            text=str(key),
-            values=(typ, val),
-            tags=("odd",) if self._row_count % 2 else ("even",),
-        )
-        self._row_count += 1
+            node_id = self.tree.insert(
+                parent,
+                "end",
+                text=str(key),
+                values=(typ, val),
+                tags=("odd",) if self._row_count % 2 else ("even",),
+            )
+            self._row_count += 1
 
-        # apply coloring tags
-        color = COLOR_MAP.get(typ)
-        bg = ROW_BG.get(typ)
-        if color or bg:
-            tag = f"t_{typ}"
-            if not self.tree.tag_has(tag):
-                self.tree.tag_configure(tag, foreground=color or "", background=bg or "")
-            existing = list(self.tree.item(node_id, "tags"))
-            existing.append(tag)
-            self.tree.item(node_id, tags=tuple(existing))
+            if is_cont or typ in COLOR_MAP:
+                tags = list(self.tree.item(node_id, "tags"))
+                tags.append(f"t_{typ}")
+                self.tree.item(node_id, tags=tuple(tags))
 
-        # if it’s a container, re-add the loading placeholder for its subtree
-        if is_cont:
-            self.tree.insert(node_id, "end", text="(loading…)")
+            if is_cont:
+                self.tree.insert(node_id, "end", text="(loading…)")
 
-        # schedule the next single-row insert
         self.after(1, self._process_chunk)
 
     def _get_obj(self, iid: str) -> Any:
