@@ -1,19 +1,8 @@
-#!/usr/bin/env python3
-import concurrent.futures
-import datetime
+import json
 import gzip
-import re
-import signal
-import sys
-import threading
-import tkinter as tk
-from argparse import ArgumentParser, Namespace
-from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
-from edit_dialog import EditValueDialog
-
-from ttkthemes import ThemedTk
+from PyQt6 import QtWidgets, QtGui, QtCore
 
 COLOR_MAP: Dict[str, str] = {
     "int": "#b58900",
@@ -27,19 +16,13 @@ COLOR_MAP: Dict[str, str] = {
     "set": "#dc322f",
 }
 
-ROW_BG: Dict[str, str] = {k: v.replace("dc322f", "ffd6d6") for k, v in COLOR_MAP.items()}
-
 
 def load_json(path: str) -> Any:
-    try:
-        import ujson as json_module
-    except ImportError:
-        import json as json_module
     if path.endswith(".gz"):
         with gzip.open(path, "rt", encoding="utf-8") as f:
-            return json_module.load(f)
+            return json.load(f)
     with open(path, "r", encoding="utf-8") as f:
-        return json_module.load(f)
+        return json.load(f)
 
 
 def prepare_items(obj: Any) -> List[Tuple[Union[str, int], str, str, bool]]:
@@ -54,522 +37,468 @@ def prepare_items(obj: Any) -> List[Tuple[Union[str, int], str, str, bool]]:
     return items
 
 
-class JsonInspector(ThemedTk):
+class EditValueDialog(QtWidgets.QDialog):
+    def __init__(self, parent: QtWidgets.QWidget, current_type: str, current_val: str) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Edit Value")
+        self.result_value: Tuple[str, Any] = (current_type, current_val)
+
+        layout = QtWidgets.QFormLayout(self)
+
+        self.type_cb = QtWidgets.QComboBox(self)
+        self.type_cb.addItems(["int", "float", "bool", "str", "NoneType"])  # type: ignore
+        self.type_cb.setCurrentText(current_type)
+        layout.addRow("Type:", self.type_cb)
+
+        self.val_edit = QtWidgets.QLineEdit(str(current_val), self)
+        layout.addRow("Value:", self.val_edit)
+
+        btn_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(self.accept)  # type: ignore
+        btn_box.rejected.connect(self.reject)  # type: ignore
+        layout.addRow(btn_box)
+
+    def accept(self) -> None:  # type: ignore[override]
+        t = self.type_cb.currentText()
+        raw = self.val_edit.text().strip().replace("'", "").replace('"', "")
+        if t == "int":
+            val = int(raw)
+        elif t == "float":
+            val = float(raw)
+        elif t == "bool":
+            val = raw.lower() == "true"
+        elif t == "NoneType":
+            val = None
+        else:
+            val = raw
+        self.result_value = (t, val)
+        super().accept()
+
+
+class WorkerSignals(QtCore.QObject):
+    loaded = QtCore.pyqtSignal(
+        QtWidgets.QTreeWidgetItem,
+        list,
+        tuple,
+    )
+
+
+class LoadChildrenWorker(QtCore.QRunnable):
+    def __init__(self, parent_item: QtWidgets.QTreeWidgetItem, obj: Any, path: Tuple[Union[str, int], ...]):
+        super().__init__()
+        self.signals = WorkerSignals()
+        self.parent_item: QtWidgets.QTreeWidgetItem = parent_item
+        self.obj = obj
+        self.path = path
+
+    def run(self) -> None:
+        items = prepare_items(self.obj)
+
+        self.signals.loaded.emit(self.parent_item, items, self.path)
+
+
+class JsonInspector(QtWidgets.QMainWindow):
     def __init__(self, path: str) -> None:
-        super().__init__(theme="radiance")
-        signal.signal(signalnum=signal.SIGINT, handler=lambda _s, _f: self.destroy())
-        self.bind_all(sequence="<Control-c>", func=lambda e: self.destroy())
-        self.title(string=f"Json Inspector <{path}>")
-        self.geometry(newGeometry="1400x900")
-        self._precache: Dict[str, List[Tuple[Any, str, str, bool]]] = {}
+        super().__init__()
+        self._current_path = path
+        self.data: Any = load_json(path)
+        self._cache: Dict[Tuple[Union[str, int], ...], List[Any]] = {}
+        self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
 
-        self._search_results: List[str] = []
-        self._search_idx: int = -1
+        self._matches: List[QtWidgets.QTreeWidgetItem] = []
+        self._current_match: int = -1
 
-        self.loading = True
-        self._dots = 0
-        self.loading_label = ttk.Label(self, text="Loading", font=("TkDefaultFont", 16))
-        self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
-        self.breadcrumb_label: ttk.Label = ttk.Label(self, text="", font=("TkDefaultFont", 11))
-        self.breadcrumb_label.pack(fill=tk.X, padx=5, pady=(4, 0))
-        self._animate()
-
-        self._executor = concurrent.futures.ProcessPoolExecutor()
-        self.data: Any = None
-        self._expanded: Set[str] = set()
-
+        self.setWindowTitle(f"Json Inspector <{path}>")
+        self.resize(1400, 800)
         self._build_ui()
 
-        threading.Thread(target=self._load_data, args=(path,), daemon=True).start()
-        self._current_path: str = path
-        self.last_save_time: datetime.datetime | None = None
-        threading.Thread(target=self._precache_all, daemon=True).start()
+        self.tree.itemExpanded.connect(self._on_item_expanded)  # type: ignore
+        self._populate_tree()
 
-    def _get_path_keys(self, iid: str) -> List[str]:
-        path: List[str] = []
-        node = iid
-        while node:
-            text: str = self.tree.item(item=node, option="text")
-            path.insert(0, text)
-            node: str = self.tree.parent(item=node)
-        return [path[0].split(":")[0]] + path[1:]
+    def _build_ui(self) -> None:
+        menu: QtWidgets.QMenu | None = self.menuBar().addMenu("File")  # type: ignore
+        open_act: QtGui.QAction | None = menu.addAction("Open…")  # type: ignore
+        open_act.triggered.connect(self._open_file)  # type: ignore
+        save_act: QtGui.QAction | None = menu.addAction("Save")  # type: ignore
+        save_act.triggered.connect(self._save_file)  # type: ignore
+        save_as_act: QtGui.QAction | None = menu.addAction("Save As…")  # type: ignore
+        save_as_act.triggered.connect(self._save_as_file)  # type: ignore
+        menu.addSeparator()  # type: ignore
+        quit_act: QtGui.QAction | None = menu.addAction("Quit")  # type: ignore
+        quit_act.triggered.connect(self.close)  # type: ignore
 
-    def _update_breadcrumbs(self, iid: str) -> None:
-        keys: List[str] = self._get_path_keys(iid)
-        crumb: str = " > ".join(keys)
-        self.breadcrumb_label.config(text=crumb)
+        tool_bar = QtWidgets.QToolBar()
+        self.addToolBar(tool_bar)
 
-    def _on_search(self) -> None:
-        q: str = self.search_var.get().strip()
-        if not q:
+        self.search_edit = QtWidgets.QLineEdit()
+        self.search_edit.setPlaceholderText("Find key or value…")
+        tool_bar.addWidget(self.search_edit)
+
+        search_btn = QtWidgets.QPushButton("Search")
+        search_btn.clicked.connect(self._perform_search)  # type: ignore
+        tool_bar.addWidget(search_btn)
+
+        clear_btn = QtWidgets.QPushButton("Clear")
+        clear_btn.clicked.connect(self._clear_search)  # type: ignore
+        tool_bar.addWidget(clear_btn)
+
+        prev_btn = QtWidgets.QPushButton("◀")
+        next_btn = QtWidgets.QPushButton("▶")
+        prev_btn.clicked.connect(lambda: self._step_match(-1))  # type: ignore
+        next_btn.clicked.connect(lambda: self._step_match(+1))  # type: ignore
+        tool_bar.addWidget(prev_btn)
+        tool_bar.addWidget(next_btn)
+
+        self.match_label = QtWidgets.QLabel("0/0")
+        tool_bar.addWidget(self.match_label)
+
+        splitter = QtWidgets.QSplitter(self)
+        self.setCentralWidget(splitter)
+
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderLabels(["Key", "Type"])  # type: ignore
+        self.tree.header().resizeSection(0, 300)  # type: ignore
+        self.tree.itemSelectionChanged.connect(self._on_select)  # type: ignore
+        splitter.addWidget(self.tree)
+
+        self.prop_table = QtWidgets.QTableWidget()
+        self.prop_table.setColumnCount(3)
+        self.prop_table.setHorizontalHeaderLabels(["Key", "Type", "Value"])  # type: ignore
+        self.prop_table.horizontalHeader().setStretchLastSection(True)  # type: ignore
+        self.prop_table.itemDoubleClicked.connect(self._on_prop_double_click)  # type: ignore
+        splitter.addWidget(self.prop_table)
+
+    def _populate_tree(self) -> None:
+        self.tree.clear()
+        root = QtWidgets.QTreeWidgetItem(["root", type(self.data).__name__, ""])
+        self.tree.addTopLevelItem(root)
+
+        if isinstance(self.data, (dict, list, tuple, set)):
+            placeholder = QtWidgets.QTreeWidgetItem(["Loading...", "", ""])
+            root.addChild(placeholder)
+
+        root.setChildIndicatorPolicy(QtWidgets.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
+        self.tree.expandItem(root)
+
+    def _current_obj_from_item(self, item: QtWidgets.QTreeWidgetItem) -> Any:
+        keys: List[Union[str, int]] = []
+        tmp: QtWidgets.QTreeWidgetItem | None = item
+
+        while tmp is not None and tmp.parent() is not None:
+            keys.insert(0, tmp.text(0))
+            tmp = tmp.parent()
+
+        return self._get_obj_by_path(tuple(keys))
+
+    def _on_item_expanded(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        if item.data(0, QtCore.Qt.ItemDataRole.UserRole) is True:  # type: ignore
             return
 
-        pat: re.Pattern[str] = re.compile(re.escape(q), re.IGNORECASE)
-        self._search_results = self._find_matches(obj=self.data, path=[], pat=pat)  # type: ignore
-        if not self._search_results:
-            messagebox.showinfo("Search", f"No matches for {q!r}")  # type: ignore
+        if item.childCount() == 1 and (child := item.child(0)) is not None and child.text(0) == "Loading...":
+            item.takeChild(0)
+
+            path: List[str] = []
+            tmp = item
+            assert tmp is not None, "Item should not be None"
+
+            while tmp is not None and tmp.parent() is not None:
+                path.insert(0, tmp.text(0))
+                tmp: QtWidgets.QTreeWidgetItem | None = tmp.parent()
+            path_tuple: Tuple[str, ...] = tuple(path)
+
+            if path_tuple in self._cache:
+                self._add_children(item, self._cache[path_tuple])
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, True)
+                return
+
+            worker = LoadChildrenWorker(item, self._current_obj_from_item(item), path_tuple)
+            worker.signals.loaded.connect(self._on_children_loaded, QtCore.Qt.ConnectionType.QueuedConnection)  # type: ignore
+            self._threadpool.start(worker)  # type: ignore
+
+    @QtCore.pyqtSlot(QtWidgets.QTreeWidgetItem, list, tuple)  # type: ignore
+    def _on_children_loaded(
+        self,
+        parent_item: QtWidgets.QTreeWidgetItem,
+        items: List[Tuple[Union[str, int], str, str, bool]],
+        path_tuple: Tuple[Union[str, int], ...],
+    ) -> None:
+        self._cache[path_tuple] = items
+
+        self._add_children(parent_item, items)
+        parent_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, True)
+
+        for key, typ, val, is_cont in items:  # type: ignore
+            if is_cont:
+                child_path = path_tuple + (key,)
+                child_obj = self._get_obj_by_path(child_path)
+                w = LoadChildrenWorker(parent_item.child(key if isinstance(key, int) else 0), child_obj, child_path)  # type: ignore
+                w.signals.loaded.connect(self._on_cache_only, QtCore.Qt.ConnectionType.QueuedConnection)  # type: ignore
+                self._threadpool.start(w)  # type: ignore
+
+    @QtCore.pyqtSlot(QtWidgets.QTreeWidgetItem, list, tuple)  # type: ignore[no-untyped-def]
+    def _on_cache_only(
+        self,
+        parent_item: QtWidgets.QTreeWidgetItem,
+        items: List[Tuple[Union[str, int], str, str, bool]],
+        path_tuple: Tuple[Union[str, int], ...],
+    ) -> None:
+        self._cache[path_tuple] = items
+
+    def _add_children(
+        self, parent_item: QtWidgets.QTreeWidgetItem, items: List[Tuple[Union[str, int], str, str, bool]]
+    ) -> None:
+        for key, typ, displayed, is_cont in items:
+            child = QtWidgets.QTreeWidgetItem([str(key), typ])
+
+            child.setData(0, QtCore.Qt.ItemDataRole.UserRole, displayed if not is_cont else "")
+            if typ in COLOR_MAP:
+                c = QtGui.QColor(COLOR_MAP[typ])
+                brush = QtGui.QBrush(c)
+                child.setForeground(0, brush)
+                child.setForeground(1, brush)
+
+            if is_cont:
+                placeholder = QtWidgets.QTreeWidgetItem(["Loading...", "", ""])
+                child.addChild(placeholder)
+                child.setChildIndicatorPolicy(QtWidgets.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
+
+            parent_item.addChild(child)
+
+    def _get_obj_by_path(self, path: Tuple[Union[str, int], ...]) -> Any:
+        obj = self.data
+        for k in path:
+            if isinstance(obj, dict):
+                obj = obj[k]  # type: ignore[index]
+            else:
+                obj = obj[int(k)]  # type: ignore[index]
+        return obj  # type: ignore[return-value]
+
+    def _on_select(self) -> None:
+        items: List[QtWidgets.QTreeWidgetItem] = self.tree.selectedItems()
+        if not items:
+            return
+        item: QtWidgets.QTreeWidgetItem = items[0]
+        obj = self._current_obj_from_item(item)
+        self._populate_properties(obj)
+
+    def _populate_properties(self, obj: Any) -> None:
+        self.prop_table.clearContents()
+        self.prop_table.setRowCount(0)
+        if isinstance(obj, dict):
+            for i, (k, v) in enumerate(obj.items()):  # type: ignore
+                self.prop_table.insertRow(i)
+                self.prop_table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(k)))  # type: ignore
+                self.prop_table.setItem(i, 1, QtWidgets.QTableWidgetItem(type(v).__name__))  # type: ignore
+                self.prop_table.setItem(i, 2, QtWidgets.QTableWidgetItem(str(v)))  # type: ignore
+
+        elif isinstance(obj, (list, tuple, set)):
+            for i, v in enumerate(obj):  # type: ignore
+                self.prop_table.insertRow(i)
+                self.prop_table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(i)))
+                self.prop_table.setItem(i, 1, QtWidgets.QTableWidgetItem(type(v).__name__))  # type: ignore
+                self.prop_table.setItem(i, 2, QtWidgets.QTableWidgetItem(str(v)))  # type: ignore
+
+        else:
+            self.prop_table.insertRow(0)
+            self.prop_table.setItem(0, 0, QtWidgets.QTableWidgetItem("value"))
+            self.prop_table.setItem(0, 1, QtWidgets.QTableWidgetItem(type(obj).__name__))
+            self.prop_table.setItem(0, 2, QtWidgets.QTableWidgetItem(str(obj)))
+
+    def _on_prop_double_click(self, item: QtWidgets.QTableWidgetItem) -> None:
+        row = item.row()
+
+        key_item: QtWidgets.QTableWidgetItem | None = self.prop_table.item(row, 0)
+        type_item: QtWidgets.QTableWidgetItem | None = self.prop_table.item(row, 1)
+        val_item: QtWidgets.QTableWidgetItem | None = self.prop_table.item(row, 2)
+
+        if not key_item or not type_item or not val_item:
             return
 
-        self._search_idx = 0
-        self._goto_search_result()
+        cur_type = type_item.text()
 
-    def _find_matches(self, obj: Any, path: List[Union[str, int]], pat: re.Pattern[Any]) -> List[List[Union[str, int]]]:
-        results: List[List[Union[str, int]]] = []
+        if cur_type in {"dict", "list", "tuple", "set"}:
+            return
+
+        cur_val = val_item.text()
+        dlg = EditValueDialog(self, cur_type, cur_val)
+
+        if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            new_type, new_val = dlg.result_value
+            type_item.setText(new_type)
+            val_item.setText(str(new_val))
+
+            parent_obj = self._current_obj_from_item(self.tree.selectedItems()[0])
+            key_raw = key_item.text()
+            key = int(key_raw) if isinstance(parent_obj, list) else key_raw
+
+            if isinstance(parent_obj, dict):
+                parent_obj[key] = new_val
+
+            elif isinstance(parent_obj, list):
+                parent_obj[key] = new_val  # type: ignore[index]
+
+    def _open_file(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Open File", "", filter="JSON files (*.json *.gz);;All files (*)"
+        )
+        if not path:
+            return
+        self._current_path = path
+        self.data = load_json(path)
+        self.setWindowTitle(f"Json Inspector <{path}>")
+        self._populate_tree()
+
+    def _save_file(self) -> None:
+        self._write_json(self._current_path)
+
+    def _save_as_file(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save JSON", self._current_path, filter="JSON files (*.json *.gz);;All files (*)"
+        )
+        if not path:
+            return
+        self._current_path = path
+        self._write_json(path)
+
+    def _write_json(self, path: str) -> None:
+        if path.endswith(".gz"):
+            with gzip.open(path, "wt", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=4)
+        else:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=4)
+
+    def _perform_search(self) -> None:
+        term: str = self.search_edit.text().strip().lower()
+        dlg = QtWidgets.QProgressDialog("Searching…", None, 0, 0, self)
+        dlg.setWindowTitle("Please wait")
+        dlg.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)  # show immediately
+        dlg.show()
+
+        QtWidgets.QApplication.processEvents()
+
+        self._matches.clear()
+        self._current_match = -1
+        if not term:
+            dlg.close()
+            self.match_label.setText("0/0")
+            return
+
+        matches = self._find_paths_in_data(term)
+        for path, _ in matches:
+            item: QtWidgets.QTreeWidgetItem | None = self._item_for_path(path)
+            if item is not None:
+                self._matches.append(item)
+
+        total = len(self._matches)
+        if total:
+            self._step_match(0)
+        else:
+            self.match_label.setText("0/0")
+
+        dlg.close()
+
+    def _step_match(self, delta: int) -> None:
+        if not self._matches:
+            return
+
+        self._current_match = (self._current_match + (delta or 1)) % len(self._matches)
+        self._goto_match(self._current_match)
+
+    def _goto_match(self, idx: int) -> None:
+        item: QtWidgets.QTreeWidgetItem = self._matches[idx]
+        parent = item.parent()
+        while parent:
+            self.tree.expandItem(parent)
+            parent: QtWidgets.QTreeWidgetItem | None = parent.parent()
+
+        self.tree.setCurrentItem(item)
+        self.tree.scrollToItem(item)
+        self.match_label.setText(f"{idx + 1}/{len(self._matches)}")
+
+    def _clear_search(self) -> None:
+        self.search_edit.clear()
+        self._matches.clear()
+        self._current_match = -1
+        self.match_label.setText("0/0")
+        self.tree.clearSelection()
+
+    def _find_paths_in_data(
+        self, term: str, obj: Any = None, path: Tuple[str, ...] = ()
+    ) -> List[Tuple[Tuple[Union[str, int], ...], str]]:
+        if obj is None:
+            obj = self.data
+        results: List[Tuple[Tuple[Union[str, int], ...], str]] = []
 
         if isinstance(obj, dict):
             for k, v in obj.items():  # type: ignore
-                if pat.search(str(k)):  # type: ignore
-                    results.append(path + [k])  # type: ignore
-                if not isinstance(v, (dict, list, tuple, set)) and pat.search(str(v)):  # type: ignore
-                    results.append(path + [k])
-                results += self._find_matches(v, path + [k], pat)
+                key_str = str(k).lower()  # type: ignore
+                is_cont = isinstance(v, (dict, list, tuple, set))
+                val_str = (repr(v) if not isinstance(v, str) else v).lower()  # type: ignore
+                p = path + (k,)  # type: ignore
+
+                if term == key_str or (not is_cont and term == val_str):
+                    results.append((p, val_str if term == val_str else key_str))  # type: ignore
+
+                if is_cont:
+                    results += self._find_paths_in_data(term, v, p)  # type: ignore
 
         elif isinstance(obj, (list, tuple, set)):
-            for idx, v in enumerate(obj):  # type: ignore
-                if not isinstance(v, (dict, list, tuple, set)) and pat.search(str(v)):  # type: ignore
-                    results.append(path + [idx])
-                results += self._find_matches(v, path + [idx], pat)
+            for i, v in enumerate(obj):  # type: ignore
+                key_str: str = str(i).lower()
+                is_cont: bool = isinstance(v, (dict, list, tuple, set))
+                val_str: str = repr(v).lower()  # type: ignore
+                p = path + (i,)
+
+                if term == key_str or (not is_cont and term == val_str):
+                    results.append((p, val_str if term == val_str else key_str))
+
+                if isinstance(v, (dict, list, tuple, set)):
+                    results += self._find_paths_in_data(term, v, p)  # type: ignore
 
         return results
 
-    def _goto_search_result(self) -> None:
-        path: str = self._search_results[self._search_idx]
-        root_iid: str = next(iter(self.tree.get_children("")))
-        path = self._search_results[self._search_idx]
-        self._expand_and_select(root_iid, path)
-
-    def _expand_and_select(
-        self,
-        iid: str,
-        path: List[Union[str, int]] | str,
-    ) -> None:
-        if not path:
-            self.tree.see(iid)
-            self.tree.selection_set(iid)
-            self.tree.focus(iid)
+    def _load_children_sync(self, item: QtWidgets.QTreeWidgetItem, path: Tuple[str, ...]) -> None:
+        if item.data(0, QtCore.Qt.ItemDataRole.UserRole):
             return
 
-        if iid not in self._expanded:
-            self.tree.item(iid, open=True)
-            self._on_open(None)
-        key = str(path[0])
-        for child in self.tree.get_children(iid):
-            if self.tree.item(child, "text") == key:
-                return self._expand_and_select(child, path[1:])
-
-    def _on_next(self) -> None:
-        if not self._search_results:
-            return
-        self._search_idx = (self._search_idx + 1) % len(self._search_results)
-        self._goto_search_result()
-
-    def _on_prev(self) -> None:
-        if not self._search_results:
-            return
-        self._search_idx = (self._search_idx - 1) % len(self._search_results)
-        self._goto_search_result()
-
-    def _build_search_ui(self) -> None:
-        frm = ttk.Frame(self)
-        frm.pack(fill=tk.X, padx=5, pady=(0, 5))
-
-        self.search_var = tk.StringVar()
-        ttk.Label(frm, text="Search:").pack(side="left")
-        entry = ttk.Entry(frm, textvariable=self.search_var)
-        entry.pack(side="left", fill=tk.X, expand=True, padx=(2, 5))
-        entry.bind("<Return>", lambda e: self._on_search())
-
-        ttk.Button(frm, text="Search", command=self._on_search).pack(side="left", padx=2)
-        ttk.Button(frm, text="◀ Prev", command=self._on_prev).pack(side="left", padx=2)
-        ttk.Button(frm, text="Next ▶", command=self._on_next).pack(side="left", padx=2)
-
-    def _build_ui(self) -> None:
-        menubar = tk.Menu(self)
-
-        filemenu = tk.Menu(menubar, tearoff=0)
-
-        filemenu.add_command(label="Open...", command=self._open_file, accelerator="Ctrl+O")
-        self.bind_all("<Control-o>", lambda e: self._open_file())
-
-        filemenu.add_command(label="Save", command=self._save_file, accelerator="Ctrl+S")
-        self.bind_all("<Control-s>", lambda e: self._save_file())
-
-        filemenu.add_command(label="Save As…", command=self._save_as_file, accelerator="Ctrl+Shift+S")
-        self.bind_all("<Control-Shift-s>", lambda e: self._save_as_file())
-
-        filemenu.add_separator()
-
-        filemenu.add_command(label="Quit", command=self.destroy, accelerator="Ctrl+Q")
-        self.bind_all("<Control-q>", lambda e: self.destroy())
-
-        menubar.add_cascade(label="File", menu=filemenu)
-        self._filemenu: tk.Menu = filemenu
-
-        view = tk.Menu(menubar, tearoff=0)
-        self.show_vals = tk.BooleanVar(self, value=False)
-        view.add_checkbutton(label="Show Values", variable=self.show_vals, command=self._toggle)
-        menubar.add_cascade(label="View", menu=view)
-
-        self._build_search_ui()
-
-        self.status_label = ttk.Label(menubar, text="Loading", foreground="red", font=("TkDefaultFont", 10))
-        self.status_label.pack(side=tk.RIGHT, padx=5, pady=2)
-
-        self.config(menu=menubar)  # type: ignore
-
-        self.pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
-        self.pane.pack(fill=tk.BOTH, expand=True)
-
-        self.prop_frame = ttk.Frame(self.pane)
-        self.prop_tree = ttk.Treeview(self.prop_frame, columns=("key", "type", "value"), show="headings")
-        for col, title, width in [("key", "Key", 200), ("type", "Type", 100), ("value", "Value", 400)]:
-            self.prop_tree.heading(col, text=title)
-            self.prop_tree.column(col, stretch=True, width=width)
-
-        prop_vsb = ttk.Scrollbar(self.prop_frame, orient=tk.VERTICAL, command=self.prop_tree.yview)  # type: ignore
-        self.prop_tree.configure(yscrollcommand=prop_vsb.set)
-        self.prop_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.prop_tree.bind("<Double-1>", self._on_prop_double_click)
-
-        prop_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.pane.add(self.prop_frame, weight=1)  # type: ignore
-
-        self.tree_frame = ttk.Frame(self.pane)
-        self.tree = ttk.Treeview(self.tree_frame, columns=("type"), show="tree headings", selectmode="browse")
-
-        self.tree.heading("#0", text="Key")
-        self.tree.heading("type", text="Type")
-        self.tree.column("type", width=80)
-
-        tree_vsb = ttk.Scrollbar(self.tree_frame, orient=tk.VERTICAL, command=self.tree.yview)  # type: ignore
-
-        self.tree.configure(yscrollcommand=tree_vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        tree_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.pane.add(self.tree_frame, weight=3)  # type: ignore
-
-        self._row_count = 0
-        self.tree.tag_configure("odd", background="#f9f9f9")
-        self.tree.tag_configure("even", background="#e0e0e0")
-
-        for typ, color in COLOR_MAP.items():
-            bg = ROW_BG[typ]
-            self.tree.tag_configure(f"t_{typ}", foreground=color, background=bg)
-
-        self.tree.bind("<<TreeviewOpen>>", self._on_open)
-        self.tree.bind("<<TreeviewSelect>>", self._on_select)
-
-        year = datetime.datetime.now().year
-        self.footer = ttk.Frame(self)
-        self.footer.pack(side=tk.BOTTOM, fill=tk.X)
-
-        self.loaded_file_label = ttk.Label(master=self.footer, text="", font=("TkDefaultFont", 10))
-        self.loaded_file_label.pack(side=tk.LEFT, padx=5, pady=2)
-
-        self.save_time_label = ttk.Label(master=self.footer, text="", font=("TkDefaultFont", 10))
-        self.save_time_label.pack(side=tk.LEFT, padx=5, pady=2)
-
-        self.copy_label = ttk.Label(
-            master=self.footer,
-            text=f"© Scarlett Verheul <scarlett.verheul@gmail.com> {year}",
-            font=("TkDefaultFont", 10),
-        )
-        self.copy_label.pack(side=tk.LEFT, padx=5, pady=2)
-
-        self.footer_status = ttk.Label(self.footer, text="Loading…", foreground="red", font=("TkDefaultFont", 10))
-        self.footer_status.pack(side=tk.RIGHT, padx=5, pady=2)
-
-        self.after(60_000, self._update_save_time)
-
-    def _on_prop_double_click(self, event: tk.Event) -> None:
-        item: str = self.prop_tree.identify_row(event.y)
-        if not item:
-            return
-
-        cur_type = self.prop_tree.set(item, "type")
-        if cur_type in ("dict", "list", "tuple", "set"):
-            return
-
-        cur_val = self.prop_tree.set(item, "value") if "value" in self.prop_tree["columns"] else ""
-        dlg = EditValueDialog(self, cur_type, cur_val)
-        self.wait_window(dlg)
-        new_type, new_val = dlg.result
-
-        self.prop_tree.set(item, "type", new_type)
-        if "value" in self.prop_tree["columns"]:
-            text = repr(new_val) if not isinstance(new_val, str) else new_val
-            self.prop_tree.set(item, "value", text)
-
-        parent_obj = self._get_obj(self._current_obj_iid)
-        raw_key = self.prop_tree.set(item, "key")
-        key: Union[int, str] = int(raw_key) if isinstance(parent_obj, list) else raw_key
-
-        if isinstance(parent_obj, dict):
-            parent_obj[key] = new_val
-        elif isinstance(parent_obj, list):
-            parent_obj[key] = new_val  # type: ignore
-        else:
-            messagebox.showerror(title="Edit Error", message="Cannot assign to a non-container value.")  # type: ignore
-            return
-
-    def _open_file(self) -> None:
-        path: str = filedialog.askopenfilename(title="Open JSON", filetypes=[("JSON files", ".json .json.gz")])
-        if not path:
-            return
-        self.loading = True
-        self.status_label.config(text="Loading", foreground="red")
-        self.footer_status.config(text="Loading…", foreground="red")
-        self.loading_label = ttk.Label(self, text="Loading", font=("TkDefaultFont", 16))
-        self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
-        self._expanded.clear()
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        for item in self.prop_tree.get_children():
-            self.prop_tree.delete(item)
-        threading.Thread(target=self._load_data, args=(path,), daemon=True).start()
-
-        self.title(string=f"Json Inspector <{path}>")
-
-    def _animate(self) -> None:
-        if not self.loading:
-            return
-
-        self.loading_label.config(text="Loading" + "." * self._dots)
-        self._dots = (self._dots + 1) % 4
-        self.after(500, self._animate)
-
-    def _load_data(self, path: str) -> None:
-        self.data = load_json(path)
-        self.after(0, self._init_tree)
-
-    def _init_tree(self) -> None:
-        self.loading = False
-        self._filemenu.entryconfig("Save", state="normal")
-        self._filemenu.entryconfig("Save As…", state="normal")
-        self.loading_label.destroy()
-
-        root_text = f"root: ({type(self.data).__name__})"
-        root_id = self.tree.insert("", "end", text=root_text, values=(type(self.data).__name__, ""), open=True)
-        self.tree.insert(root_id, "end", text="(loading…)")
-
-        self.tree.focus(root_id)
-        self.tree.selection_set(root_id)
-        self.after(0, lambda: self._on_open(None))
-
-        self.status_label.config(text="Precaching…", foreground="blue")
-        self.footer_status.config(text="Precaching…", foreground="blue")
-
-    def _save_file(self) -> None:
-        self._write_json(path=self._current_path)
-        self._record_save()
-
-    def _save_as_file(self) -> None:
-        new_path = filedialog.asksaveasfilename(
-            title="Save JSON As",
-            defaultextension=".json",
-            filetypes=[("JSON files", ".json .gz"), ("All files", "*.*")],
-        )
-        if not new_path:
-            return
-        self._current_path = new_path
-        self._write_json(new_path)
-        self.loaded_file_label.config(text=f"File: {self._current_path}")
-        self._record_save()
-
-    def _write_json(self, path: str) -> None:
-        try:
-            import ujson as json_module
-        except ImportError:
-            import json as json_module
-
-        mode, opener = ("wt", open)
-        if path.endswith(".gz"):
-            import gzip
-
-            mode, opener = ("wt", gzip.open)
-
-        with opener(path, mode, encoding="utf-8") as f:
-            json_module.dump(self.data, f, indent=4)
-
-        self.status_label.config(text=f"Saved: {path}", foreground="blue")
-        self.footer_status.config(text="Saved", foreground="blue")
-
-    def _on_open(self, _: Any) -> None:
-        iid: str = self.tree.focus()
-        if iid in self._expanded:
-            return
-
-        self._expanded.add(iid)
-        for c in self.tree.get_children(iid):
-            self.tree.delete(c)
-        self.tree.insert(iid, "end", text="(loading…)", values=("",))
-
-        obj = self._get_obj(iid)
-
-        # compute JSON-path key for this iid
-        path_keys = self._get_path_keys(iid)[1:]  # drop the “root” element
-        cache_key = "/".join(map(str, path_keys))
-
-        if cache_key in self._precache:
-            # cached result ready → immediate chunk
-            self._start_chunk(iid, self._precache.pop(cache_key))
-        else:
-            # not cached yet → submit new job
-            future = self._executor.submit(prepare_items, obj)
-            future.add_done_callback(lambda f, iid=iid: self.after(0, lambda: self._start_chunk(iid, f.result())))
-
-    def _precache_all(self) -> None:
-        def walk(obj: Any, path: List[Union[str, int]]) -> None:
-            if isinstance(obj, (dict, list, tuple, set)):
-                key = "/".join(map(str, path))
-                future = self._executor.submit(prepare_items, obj)
-                future.add_done_callback(lambda f, key=key: self._precache.setdefault(key, f.result()))
-                if isinstance(obj, dict):
-                    for k, v in obj.items():
-                        walk(v, path + [k])
-                else:
-                    for idx, v in enumerate(obj):
-                        walk(v, path + [idx])
-
-        walk(self.data, [])
-        self.after(
-            200,
-            lambda: (
-                self.status_label.config(text="Loaded", foreground="green"),
-                self.footer_status.config(text="Loaded", foreground="green"),
-            ),
-        )
-
-    def _start_chunk(self, iid: str, items: List[Tuple[Any, str, str, bool]]) -> None:
-        for c in self.tree.get_children(iid):
-            if self.tree.item(c, "text") == "(loading…)":
-                self.tree.delete(c)
-        self._chunk_iter = ((iid, key, typ, val, is_cont) for key, typ, val, is_cont in items)
-        self.after(0, self._process_chunk)
-
-    def _process_chunk(self) -> None:
-        batch_size = 40
-        for _ in range(batch_size):
-            try:
-                parent, key, typ, val, is_cont = next(self._chunk_iter)
-            except StopIteration:
-                self.status_label.config(text="Loaded", foreground="green")
-                self.footer_status.config(text="Loaded", foreground="green")
-                return
-
-            for c in self.tree.get_children(parent):
-                if self.tree.item(c, "text") == "(loading…)":
-                    self.tree.delete(c)
-
-            node_id = self.tree.insert(
-                parent,
-                "end",
-                text=str(key),
-                values=(typ, val),
-                tags=("odd",) if self._row_count % 2 else ("even",),
-            )
-            self._row_count += 1
-
-            if is_cont or typ in COLOR_MAP:
-                tags = list(self.tree.item(node_id, "tags"))
-                tags.append(f"t_{typ}")
-                self.tree.item(node_id, tags=tuple(tags))
-
-            if is_cont:
-                self.tree.insert(node_id, "end", text="(loading…)")
-
-        self.after(1, self._process_chunk)
-
-    def _get_obj(self, iid: str) -> Any:
-        path: List[str] = []
-        node: str = iid
-
-        while node:
-            text: str = self.tree.item(node, "text")
-            path.append(text)
-            node = self.tree.parent(node)
-
-        path = path[::-1][1:]
-        o = self.data
+        raw_items = prepare_items(self._get_obj_by_path(path))
+        self._cache[path] = raw_items
+        self._add_children(item, raw_items)
+        item.setData(0, QtCore.Qt.ItemDataRole.UserRole, True)
+
+    def _item_for_path(self, path: Tuple[str | int, ...]) -> QtWidgets.QTreeWidgetItem | None:
+        item: QtWidgets.QTreeWidgetItem | None = self.tree.topLevelItem(0)
+        assert item is not None, "Root item should not be None"
+        accumulated: List[str] = []
         for key in path:
-            if isinstance(o, (list, tuple)):
-                try:
-                    index = int(key)
-                except ValueError:
-                    raise KeyError(f"Invalid list index: {key}")
-                o = o[index]  # type: ignore
-            else:
-                o = o[key]  # type: ignore
-        return o  # type: ignore
+            self.tree.expandItem(item)
 
-    def _toggle(self) -> None:
-        cols = ("type", "value") if self.show_vals.get() else ("type",)
-        self.tree.configure(displaycolumns=cols)
+            self._load_children_sync(item, tuple(accumulated))
 
-    def _on_select(self, _: Any) -> None:
-        iid: str = self.tree.focus()
-        self._current_obj_iid = iid
-        self._update_breadcrumbs(iid)
-        obj = self._get_obj(iid)
-        name: str = self.tree.item(iid, "text")
-        for row in self.prop_tree.get_children():
-            self.prop_tree.delete(row)
-        if isinstance(obj, dict):
-            i: int = 0
-            for k, v in obj.items():  # type: ignore
-                i += 1
-                typ: str = type(v).__name__  # type: ignore
-                val: str = (
-                    "[expand]" if isinstance(v, (dict, list, tuple, set)) else v if isinstance(v, str) else repr(v)  # type: ignore
-                )  # type: ignore
-                self.prop_tree.insert(
-                    parent="",
-                    index="end",
-                    values=(k, typ, val),  # type: ignore
-                    tags=("odd",) if i % 2 else ("even",),  # type: ignore
-                )  # type: ignore
+            found = None
+            for idx in range(item.childCount()):
+                ch: QtWidgets.QTreeWidgetItem | None = item.child(idx)
+                if ch is not None and ch.text(0) == str(key):
+                    found: QtWidgets.QTreeWidgetItem | None = ch
+                    break
 
-            self.prop_tree.tag_configure("odd", background="#f9f9f9")
-            self.prop_tree.tag_configure("even", background="#e0e0e0")
-        elif isinstance(obj, (list, tuple, set)):
-            for i, v in enumerate(obj):  # type: ignore
-                typ = type(v).__name__  # type: ignore
-                val = "[expand]" if isinstance(v, (dict, list, tuple, set)) else v if isinstance(v, str) else repr(v)  # type: ignore
-                self.prop_tree.insert(
-                    parent="", index="end", values=(i, typ, val), tags=("odd",) if i % 2 else ("even",)
-                )
-        else:
-            typ = type(obj).__name__
-            val = obj if isinstance(obj, str) else repr(obj)
-            self.prop_tree.insert(parent="", index="end", values=(f"{name}", typ, val))
+            if not found:
+                self._on_item_expanded(item)
+                for idx in range(item.childCount()):
+                    ch = item.child(idx)
+                    if ch is not None and ch.text(0) == str(key):
+                        found = ch
+                        break
 
-    def _record_save(self) -> None:
-        self.last_save_time = datetime.datetime.now()
-        self._update_save_time(immediate=True)
+            if not found:
+                return None
 
-    def _update_save_time(self, immediate: bool = False) -> None:
-        if self.last_save_time:
-            delta: datetime.timedelta = datetime.datetime.now() - self.last_save_time
-            mins = int(delta.total_seconds() // 60)
-            if mins == 0:
-                text = "Last saved: just now"
-            else:
-                text = f"Last saved: {mins} min ago"
-            self.save_time_label.config(text=text)
-        if not immediate:
-            self.after(60_000, self._update_save_time)
+            item = found
+            accumulated.append(key)  # type: ignore[assignment]
 
-
-if __name__ == "__main__":
-    parser = ArgumentParser(description="Inspect JSON file with GUI")
-    parser.add_argument("path", nargs="?")
-    a: Namespace = parser.parse_args()
-    if not a.path:
-        a.path = filedialog.askopenfilename(title="Open JSON", filetypes=[("JSON files", ".json .json.gz")])
-        if not a.path:
-            sys.exit(0)
-    try:
-        JsonInspector(a.path).mainloop()
-    except KeyboardInterrupt:
-        sys.exit(0)
+        return item

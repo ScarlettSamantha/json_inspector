@@ -19,7 +19,7 @@ entry_point = "main:main"
 license.file = "LICENSE"
 requires = [
   "ujson",
-  "ttkthemes"
+  "PyQt6"
 ]
 assets = [
   "assets",

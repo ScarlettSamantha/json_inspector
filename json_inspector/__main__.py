@@ -1,19 +1,28 @@
-from .save_inspect_gui import JsonInspector
+from save_inspect_gui import JsonInspector
+
 from argparse import ArgumentParser, Namespace
 import sys
-from tkinter import filedialog
+from PyQt6 import QtWidgets
 
 
-def main():
+def main() -> None:
     parser = ArgumentParser(description="Inspect JSON file with GUI")
     parser.add_argument("path", nargs="?")
     a: Namespace = parser.parse_args()
+
+    app = QtWidgets.QApplication(sys.argv)
+
     if not a.path:
-        a.path = filedialog.askopenfilename(title="Open JSON", filetypes=[("JSON files", ".json .json.gz")])
+        a.path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            None, "Open JSON", filter="JSON files (*.json *.json.gz);;All files (*)"
+        )
         if not a.path:
             sys.exit(0)
+
+    win = JsonInspector(a.path)
+    win.show()
     try:
-        JsonInspector(a.path).mainloop()
+        sys.exit(app.exec())
     except KeyboardInterrupt:
         sys.exit(0)
 
