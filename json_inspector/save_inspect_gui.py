@@ -43,6 +43,9 @@ class EditValueDialog(QtWidgets.QDialog):
         self.setWindowTitle("Edit Value")
         self.result_value: Tuple[str, Any] = (current_type, current_val)
 
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(150)
+
         layout = QtWidgets.QFormLayout(self)
 
         self.type_cb = QtWidgets.QComboBox(self)
@@ -85,6 +88,22 @@ class WorkerSignals(QtCore.QObject):
     )
 
 
+class SearchSignals(QtCore.QObject):
+    finished = QtCore.pyqtSignal(list)
+
+
+class SearchWorker(QtCore.QRunnable):
+    def __init__(self, inspector: "JsonInspector", term: str):
+        super().__init__()
+        self.signals = SearchSignals()
+        self.inspector = inspector
+        self.term = term
+
+    def run(self) -> None:
+        matches = self.inspector.find_paths_in_data(self.term)
+        self.signals.finished.emit(matches)
+
+
 class LoadChildrenWorker(QtCore.QRunnable):
     def __init__(self, parent_item: QtWidgets.QTreeWidgetItem, obj: Any, path: Tuple[Union[str, int], ...]):
         super().__init__()
@@ -107,7 +126,7 @@ class JsonInspector(QtWidgets.QMainWindow):
         self._cache: Dict[Tuple[Union[str, int], ...], List[Any]] = {}
         self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
 
-        self._matches: List[QtWidgets.QTreeWidgetItem] = []
+        self._match_paths: List[Tuple[Union[str, int], ...]] = []
         self._current_match: int = -1
 
         self.setWindowTitle(f"Json Inspector <{path}>")
@@ -155,8 +174,8 @@ class JsonInspector(QtWidgets.QMainWindow):
         tool_bar.addWidget(self.match_label)
 
         splitter = QtWidgets.QSplitter(self)
-        self.setCentralWidget(splitter)
 
+        self.setCentralWidget(splitter)
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setHeaderLabels(["Key", "Type"])  # type: ignore
         self.tree.header().resizeSection(0, 300)  # type: ignore
@@ -169,6 +188,7 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.prop_table.horizontalHeader().setStretchLastSection(True)  # type: ignore
         self.prop_table.itemDoubleClicked.connect(self._on_prop_double_click)  # type: ignore
         splitter.addWidget(self.prop_table)
+        splitter.setSizes([500, 1000])  # type: ignore
 
     def _populate_tree(self) -> None:
         self.tree.clear()
@@ -348,6 +368,13 @@ class JsonInspector(QtWidgets.QMainWindow):
         self._current_path = path
         self.data = load_json(path)
         self.setWindowTitle(f"Json Inspector <{path}>")
+        self._cache.clear()
+        self._matches.clear()  # type: ignore
+        self._current_match = -1
+        self.search_edit.clear()
+        self.match_label.setText("0/0")
+        self.prop_table.clearContents()
+        self.prop_table.setRowCount(0)
         self._populate_tree()
 
     def _save_file(self) -> None:
@@ -371,46 +398,47 @@ class JsonInspector(QtWidgets.QMainWindow):
                 json.dump(self.data, f, indent=4)
 
     def _perform_search(self) -> None:
-        term: str = self.search_edit.text().strip().lower()
+        term = self.search_edit.text().strip().lower()
+        if not term:
+            self.match_label.setText("0/0")
+            return
+
         dlg = QtWidgets.QProgressDialog("Searching…", None, 0, 0, self)
         dlg.setWindowTitle("Please wait")
         dlg.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
         dlg.setCancelButton(None)
-        dlg.setMinimumDuration(0)  # show immediately
+        dlg.setMinimumDuration(0)
         dlg.show()
 
-        QtWidgets.QApplication.processEvents()
+        worker = SearchWorker(self, term)
+        worker.signals.finished.connect(lambda matches: self._on_search_finished(matches, dlg))  # type: ignore
+        self._threadpool.start(worker)  # type: ignore
 
-        self._matches.clear()
-        self._current_match = -1
-        if not term:
-            dlg.close()
-            self.match_label.setText("0/0")
-            return
-
-        matches = self._find_paths_in_data(term)
-        for path, _ in matches:
-            item: QtWidgets.QTreeWidgetItem | None = self._item_for_path(path)
-            if item is not None:
-                self._matches.append(item)
-
-        total = len(self._matches)
-        if total:
-            self._step_match(0)
-        else:
-            self.match_label.setText("0/0")
-
+    def _on_search_finished(
+        self,
+        matches: List[Tuple[Tuple[Union[str, int], ...], str]],
+        dlg: QtWidgets.QProgressDialog,
+    ) -> None:
         dlg.close()
+        self._match_paths = [path for path, _ in matches]
+        self._current_match = -1
+        cnt = len(self._match_paths)
+        self.match_label.setText(f"0/{cnt}")
+        if cnt:
+            self._step_match(0)
 
     def _step_match(self, delta: int) -> None:
-        if not self._matches:
+        if not self._match_paths:
             return
 
-        self._current_match = (self._current_match + (delta or 1)) % len(self._matches)
+        self._current_match = (self._current_match + (delta or 1)) % len(self._match_paths)
         self._goto_match(self._current_match)
 
     def _goto_match(self, idx: int) -> None:
-        item: QtWidgets.QTreeWidgetItem = self._matches[idx]
+        path = self._match_paths[idx]
+        item: QtWidgets.QTreeWidgetItem | None = self._item_for_path(path)
+        if not item:
+            return
         parent = item.parent()
         while parent:
             self.tree.expandItem(parent)
@@ -418,16 +446,17 @@ class JsonInspector(QtWidgets.QMainWindow):
 
         self.tree.setCurrentItem(item)
         self.tree.scrollToItem(item)
-        self.match_label.setText(f"{idx + 1}/{len(self._matches)}")
+
+        self.match_label.setText(f"{idx + 1}/{len(self._match_paths)}")
 
     def _clear_search(self) -> None:
         self.search_edit.clear()
-        self._matches.clear()
+        self._match_paths.clear()
         self._current_match = -1
         self.match_label.setText("0/0")
         self.tree.clearSelection()
 
-    def _find_paths_in_data(
+    def find_paths_in_data(
         self, term: str, obj: Any = None, path: Tuple[str, ...] = ()
     ) -> List[Tuple[Tuple[Union[str, int], ...], str]]:
         if obj is None:
@@ -445,7 +474,7 @@ class JsonInspector(QtWidgets.QMainWindow):
                     results.append((p, val_str if term == val_str else key_str))  # type: ignore
 
                 if is_cont:
-                    results += self._find_paths_in_data(term, v, p)  # type: ignore
+                    results += self.find_paths_in_data(term, v, p)  # type: ignore
 
         elif isinstance(obj, (list, tuple, set)):
             for i, v in enumerate(obj):  # type: ignore
@@ -458,7 +487,7 @@ class JsonInspector(QtWidgets.QMainWindow):
                     results.append((p, val_str if term == val_str else key_str))
 
                 if isinstance(v, (dict, list, tuple, set)):
-                    results += self._find_paths_in_data(term, v, p)  # type: ignore
+                    results += self.find_paths_in_data(term, v, p)  # type: ignore
 
         return results
 
