@@ -13,6 +13,15 @@ class Helper:
             return json.load(f)
 
     @staticmethod
+    def save_json(data: Any, path: str, indents: int = 4) -> None:
+        if path.endswith(".gz"):
+            with gzip.open(path, "wt", encoding="utf-8") as f:
+                json.dump(data, f, indent=indents)
+        else:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=indents)
+
+    @staticmethod
     def prepare_items(obj: Any) -> List[Tuple[Union[str, int], str, str, bool]]:
         items: List[Tuple[Union[str, int], str, str, bool]] = []
         if isinstance(obj, dict):

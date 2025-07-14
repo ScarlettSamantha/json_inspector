@@ -1,7 +1,11 @@
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from gui import JsonInspector
 
 from argparse import ArgumentParser, Namespace
-import sys
 from PyQt6 import QtWidgets
 
 

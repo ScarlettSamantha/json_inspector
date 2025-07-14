@@ -1,10 +1,10 @@
-import json
-import gzip
 from typing import Any, Dict, List, Tuple, Union
 from edit_value_dialog import EditValueDialog
+from about_dialog import AboutDialog
 from load_children_worker import LoadChildrenWorker
 from helper import Helper
 from search import Search
+from manager import JsonManager
 from PyQt6 import QtWidgets, QtGui, QtCore
 
 COLOR_MAP: Dict[str, str] = {
@@ -23,13 +23,11 @@ COLOR_MAP: Dict[str, str] = {
 class JsonInspector(QtWidgets.QMainWindow):
     def __init__(self, path: str) -> None:
         super().__init__()
+        self.json_manager = JsonManager(path)
         self._current_path = path
-        self.data: Any = Helper.load_json(path)
+        self.json_manager.data = Helper.load_json(path)
         self._cache: Dict[Tuple[Union[str, int], ...], List[Any]] = {}
         self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
-
-        self._match_paths: List[Tuple[Union[str, int], ...]] = []
-        self._current_match: int = -1
 
         self.setWindowTitle(f"Json Inspector <{path}>")
         self.resize(1400, 800)
@@ -47,16 +45,31 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.next_btn.clicked.connect(lambda: self._search_controller.step(+1))  # type: ignore
 
     def _build_ui(self) -> None:
-        menu: QtWidgets.QMenu | None = self.menuBar().addMenu("File")  # type: ignore
-        open_act: QtGui.QAction | None = menu.addAction("Open…")  # type: ignore
-        open_act.triggered.connect(self._open_file)  # type: ignore
-        save_act: QtGui.QAction | None = menu.addAction("Save")  # type: ignore
-        save_act.triggered.connect(self._save_file)  # type: ignore
-        save_as_act: QtGui.QAction | None = menu.addAction("Save As…")  # type: ignore
-        save_as_act.triggered.connect(self._save_as_file)  # type: ignore
-        menu.addSeparator()  # type: ignore
-        quit_act: QtGui.QAction | None = menu.addAction("Quit")  # type: ignore
-        quit_act.triggered.connect(self.close)  # type: ignore
+        menu_bar: QtWidgets.QMenuBar | None = self.menuBar()
+
+        assert menu_bar is not None, "Menu bar should not be None"
+
+        file_menu: QtWidgets.QMenu | None = menu_bar.addMenu("File")
+        about_menu: QtWidgets.QMenu | None = menu_bar.addMenu("About")
+
+        assert file_menu is not None, "File menu should not be None"
+
+        open_action: QtGui.QAction | None = file_menu.addAction("Open…")  # type: ignore
+        open_action.setShortcut("Ctrl+O")  # type: ignore
+        open_action.triggered.connect(self._open_file)  # type: ignore
+        save_action: QtGui.QAction | None = file_menu.addAction("Save")  # type: ignore
+        save_action.setShortcut("Ctrl+S")  # type: ignore
+        save_action.triggered.connect(self._save_file)  # type: ignore
+        save_as_action: QtGui.QAction | None = file_menu.addAction("Save As…")  # type: ignore
+        save_as_action.setShortcut("Ctrl+Shift+S")  # type: ignore
+        save_as_action.triggered.connect(self._save_as_file)  # type: ignore
+        file_menu.addSeparator()
+        exit_action: QtGui.QAction | None = file_menu.addAction("Exit")  # type: ignore
+        exit_action.setShortcut("Ctrl+Q")  # type: ignore
+        exit_action.triggered.connect(self.close)  # type: ignore
+
+        about_action = about_menu.addAction("About")  # type: ignore
+        about_action.triggered.connect(self.show_about_dialog)  # type: ignore
 
         tool_bar = QtWidgets.QToolBar()
         self.addToolBar(tool_bar)
@@ -81,12 +94,12 @@ class JsonInspector(QtWidgets.QMainWindow):
         tool_bar.addWidget(self.match_label)
 
         splitter = QtWidgets.QSplitter(self)
-
         self.setCentralWidget(splitter)
+
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setHeaderLabels(["Key", "Type"])  # type: ignore
         self.tree.header().resizeSection(0, 300)  # type: ignore
-        self.tree.itemSelectionChanged.connect(self._on_select)  # type: ignore
+        self.tree.itemSelectionChanged.connect(slot=self._on_select)  # type: ignore
         splitter.addWidget(self.tree)
 
         self.prop_table = QtWidgets.QTableWidget()
@@ -95,18 +108,20 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.prop_table.horizontalHeader().setStretchLastSection(True)  # type: ignore
         self.prop_table.itemDoubleClicked.connect(self._on_prop_double_click)  # type: ignore
         splitter.addWidget(self.prop_table)
-        splitter.setSizes([500, 1000])  # type: ignore
+        splitter.setSizes([500, 1000])  #    type: ignore
+
+    def show_about_dialog(self) -> None:
+        dlg = AboutDialog(self)
+        dlg.exec()
 
     def _populate_tree(self) -> None:
         self.tree.clear()
-        root = QtWidgets.QTreeWidgetItem(["root", type(self.data).__name__, ""])
+        root = QtWidgets.QTreeWidgetItem(["root", type(self.json_manager.data).__name__])
         self.tree.addTopLevelItem(root)
-
-        if isinstance(self.data, (dict, list, tuple, set)):
-            placeholder = QtWidgets.QTreeWidgetItem(["Loading...", "", ""])
+        if isinstance(self.json_manager.data, (dict, list, tuple, set)):
+            placeholder = QtWidgets.QTreeWidgetItem(["Loading...", ""])
             root.addChild(placeholder)
-
-        root.setChildIndicatorPolicy(QtWidgets.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
+            root.setChildIndicatorPolicy(QtWidgets.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
         self.tree.expandItem(root)
 
     def _current_obj_from_item(self, item: QtWidgets.QTreeWidgetItem) -> Any:
@@ -194,7 +209,7 @@ class JsonInspector(QtWidgets.QMainWindow):
             parent_item.addChild(child)
 
     def _get_obj_by_path(self, path: Tuple[Union[str, int], ...]) -> Any:
-        obj = self.data
+        obj = self.json_manager.data
         for k in path:
             if isinstance(obj, dict):
                 obj = obj[k]  # type: ignore[index]
@@ -268,15 +283,15 @@ class JsonInspector(QtWidgets.QMainWindow):
 
     def _open_file(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Open File", "", filter="JSON files (*.json *.gz);;All files (*)"
+            self, "Open File", "", "JSON files (*.json *.gz);;All files (*)"
         )
         if not path:
             return
-        self._current_path = path
-        self.data = Helper.load_json(path)
-        self.setWindowTitle(f"Json Inspector <{path}>")
+
+        self.json_manager.load(path)
+
+        self.setWindowTitle(f"Json Inspector <{self.json_manager.path}>")
         self._cache.clear()
-        self._matches.clear()  # type: ignore
         self._current_match = -1
         self.search_edit.clear()
         self.match_label.setText("0/0")
@@ -285,30 +300,22 @@ class JsonInspector(QtWidgets.QMainWindow):
         self._populate_tree()
 
     def _save_file(self) -> None:
-        self._write_json(self._current_path)
+        self.json_manager.save(self._current_path)
 
     def _save_as_file(self) -> None:
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save JSON", self._current_path, filter="JSON files (*.json *.gz);;All files (*)"
+            self, "Save JSON", self.json_manager.path, "JSON files (*.json *.gz);;All files (*)"
         )
         if not path:
             return
-        self._current_path = path
-        self._write_json(path)
-
-    def _write_json(self, path: str) -> None:
-        if path.endswith(".gz"):
-            with gzip.open(path, "wt", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=4)
-        else:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=4)
+        self.json_manager.save_as(path)
+        self.setWindowTitle(f"Json Inspector <{self.json_manager.path}>")
 
     def find_paths_in_data(
         self, term: str, obj: Any = None, path: Tuple[str, ...] = ()
     ) -> List[Tuple[Tuple[Union[str, int], ...], str]]:
         if obj is None:
-            obj = self.data
+            obj = self.json_manager.data
         results: List[Tuple[Tuple[Union[str, int], ...], str]] = []
 
         if isinstance(obj, dict):
