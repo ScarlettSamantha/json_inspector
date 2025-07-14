@@ -1,7 +1,10 @@
 import json
 import gzip
 from typing import Any, Dict, List, Tuple, Union
-
+from edit_value_dialog import EditValueDialog
+from load_children_worker import LoadChildrenWorker
+from helper import Helper
+from search import Search
 from PyQt6 import QtWidgets, QtGui, QtCore
 
 COLOR_MAP: Dict[str, str] = {
@@ -17,112 +20,11 @@ COLOR_MAP: Dict[str, str] = {
 }
 
 
-def load_json(path: str) -> Any:
-    if path.endswith(".gz"):
-        with gzip.open(path, "rt", encoding="utf-8") as f:
-            return json.load(f)
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def prepare_items(obj: Any) -> List[Tuple[Union[str, int], str, str, bool]]:
-    items: List[Tuple[Union[str, int], str, str, bool]] = []
-    if isinstance(obj, dict):
-        for k, v in obj.items():  # type: ignore
-            displayed = repr(v) if not isinstance(v, str) else v  # type: ignore
-            items.append((k, type(v).__name__, displayed, isinstance(v, (dict, list, tuple, set))))  # type: ignore
-    elif isinstance(obj, (list, tuple, set)):
-        for i, v in enumerate(obj):  # type: ignore
-            items.append((i, type(v).__name__, repr(v), isinstance(v, (dict, list, tuple, set))))  # type: ignore
-    return items
-
-
-class EditValueDialog(QtWidgets.QDialog):
-    def __init__(self, parent: QtWidgets.QWidget, current_type: str, current_val: str) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Edit Value")
-        self.result_value: Tuple[str, Any] = (current_type, current_val)
-
-        self.setMinimumWidth(500)
-        self.setMinimumHeight(150)
-
-        layout = QtWidgets.QFormLayout(self)
-
-        self.type_cb = QtWidgets.QComboBox(self)
-        self.type_cb.addItems(["int", "float", "bool", "str", "NoneType"])  # type: ignore
-        self.type_cb.setCurrentText(current_type)
-        layout.addRow("Type:", self.type_cb)
-
-        self.val_edit = QtWidgets.QLineEdit(str(current_val), self)
-        layout.addRow("Value:", self.val_edit)
-
-        btn_box = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
-        )
-        btn_box.accepted.connect(self.accept)  # type: ignore
-        btn_box.rejected.connect(self.reject)  # type: ignore
-        layout.addRow(btn_box)
-
-    def accept(self) -> None:  # type: ignore[override]
-        t = self.type_cb.currentText()
-        raw = self.val_edit.text().strip().replace("'", "").replace('"', "")
-        if t == "int":
-            val = int(raw)
-        elif t == "float":
-            val = float(raw)
-        elif t == "bool":
-            val = raw.lower() == "true"
-        elif t == "NoneType":
-            val = None
-        else:
-            val = raw
-        self.result_value = (t, val)
-        super().accept()
-
-
-class WorkerSignals(QtCore.QObject):
-    loaded = QtCore.pyqtSignal(
-        QtWidgets.QTreeWidgetItem,
-        list,
-        tuple,
-    )
-
-
-class SearchSignals(QtCore.QObject):
-    finished = QtCore.pyqtSignal(list)
-
-
-class SearchWorker(QtCore.QRunnable):
-    def __init__(self, inspector: "JsonInspector", term: str):
-        super().__init__()
-        self.signals = SearchSignals()
-        self.inspector = inspector
-        self.term = term
-
-    def run(self) -> None:
-        matches = self.inspector.find_paths_in_data(self.term)
-        self.signals.finished.emit(matches)
-
-
-class LoadChildrenWorker(QtCore.QRunnable):
-    def __init__(self, parent_item: QtWidgets.QTreeWidgetItem, obj: Any, path: Tuple[Union[str, int], ...]):
-        super().__init__()
-        self.signals = WorkerSignals()
-        self.parent_item: QtWidgets.QTreeWidgetItem = parent_item
-        self.obj = obj
-        self.path = path
-
-    def run(self) -> None:
-        items = prepare_items(self.obj)
-
-        self.signals.loaded.emit(self.parent_item, items, self.path)
-
-
 class JsonInspector(QtWidgets.QMainWindow):
     def __init__(self, path: str) -> None:
         super().__init__()
         self._current_path = path
-        self.data: Any = load_json(path)
+        self.data: Any = Helper.load_json(path)
         self._cache: Dict[Tuple[Union[str, int], ...], List[Any]] = {}
         self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
 
@@ -135,6 +37,14 @@ class JsonInspector(QtWidgets.QMainWindow):
 
         self.tree.itemExpanded.connect(self._on_item_expanded)  # type: ignore
         self._populate_tree()
+
+        assert self._threadpool is not None, "Thread pool should not be None"
+
+        self._search_controller = Search(self, self._threadpool)
+        self.search_btn.clicked.connect(lambda: self._search_controller.perform_search(self.search_edit.text()))  # type: ignore
+        self.clear_btn.clicked.connect(self._search_controller.clear)  # type: ignore
+        self.prev_btn.clicked.connect(lambda: self._search_controller.step(-1))  # type: ignore
+        self.next_btn.clicked.connect(lambda: self._search_controller.step(+1))  # type: ignore
 
     def _build_ui(self) -> None:
         menu: QtWidgets.QMenu | None = self.menuBar().addMenu("File")  # type: ignore
@@ -155,20 +65,17 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.search_edit.setPlaceholderText("Find key or value…")
         tool_bar.addWidget(self.search_edit)
 
-        search_btn = QtWidgets.QPushButton("Search")
-        search_btn.clicked.connect(self._perform_search)  # type: ignore
-        tool_bar.addWidget(search_btn)
+        self.search_btn = QtWidgets.QPushButton("Search")
+        tool_bar.addWidget(self.search_btn)
 
-        clear_btn = QtWidgets.QPushButton("Clear")
-        clear_btn.clicked.connect(self._clear_search)  # type: ignore
-        tool_bar.addWidget(clear_btn)
+        self.clear_btn = QtWidgets.QPushButton("Clear")
+        tool_bar.addWidget(self.clear_btn)
 
-        prev_btn = QtWidgets.QPushButton("◀")
-        next_btn = QtWidgets.QPushButton("▶")
-        prev_btn.clicked.connect(lambda: self._step_match(-1))  # type: ignore
-        next_btn.clicked.connect(lambda: self._step_match(+1))  # type: ignore
-        tool_bar.addWidget(prev_btn)
-        tool_bar.addWidget(next_btn)
+        self.prev_btn = QtWidgets.QPushButton("◀")
+        tool_bar.addWidget(self.prev_btn)
+
+        self.next_btn = QtWidgets.QPushButton("▶")
+        tool_bar.addWidget(self.next_btn)
 
         self.match_label = QtWidgets.QLabel("0/0")
         tool_bar.addWidget(self.match_label)
@@ -366,7 +273,7 @@ class JsonInspector(QtWidgets.QMainWindow):
         if not path:
             return
         self._current_path = path
-        self.data = load_json(path)
+        self.data = Helper.load_json(path)
         self.setWindowTitle(f"Json Inspector <{path}>")
         self._cache.clear()
         self._matches.clear()  # type: ignore
@@ -396,65 +303,6 @@ class JsonInspector(QtWidgets.QMainWindow):
         else:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=4)
-
-    def _perform_search(self) -> None:
-        term = self.search_edit.text().strip().lower()
-        if not term:
-            self.match_label.setText("0/0")
-            return
-
-        dlg = QtWidgets.QProgressDialog("Searching…", None, 0, 0, self)
-        dlg.setWindowTitle("Please wait")
-        dlg.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
-        dlg.setCancelButton(None)
-        dlg.setMinimumDuration(0)
-        dlg.show()
-
-        worker = SearchWorker(self, term)
-        worker.signals.finished.connect(lambda matches: self._on_search_finished(matches, dlg))  # type: ignore
-        self._threadpool.start(worker)  # type: ignore
-
-    def _on_search_finished(
-        self,
-        matches: List[Tuple[Tuple[Union[str, int], ...], str]],
-        dlg: QtWidgets.QProgressDialog,
-    ) -> None:
-        dlg.close()
-        self._match_paths = [path for path, _ in matches]
-        self._current_match = -1
-        cnt = len(self._match_paths)
-        self.match_label.setText(f"0/{cnt}")
-        if cnt:
-            self._step_match(0)
-
-    def _step_match(self, delta: int) -> None:
-        if not self._match_paths:
-            return
-
-        self._current_match = (self._current_match + (delta or 1)) % len(self._match_paths)
-        self._goto_match(self._current_match)
-
-    def _goto_match(self, idx: int) -> None:
-        path = self._match_paths[idx]
-        item: QtWidgets.QTreeWidgetItem | None = self._item_for_path(path)
-        if not item:
-            return
-        parent = item.parent()
-        while parent:
-            self.tree.expandItem(parent)
-            parent: QtWidgets.QTreeWidgetItem | None = parent.parent()
-
-        self.tree.setCurrentItem(item)
-        self.tree.scrollToItem(item)
-
-        self.match_label.setText(f"{idx + 1}/{len(self._match_paths)}")
-
-    def _clear_search(self) -> None:
-        self.search_edit.clear()
-        self._match_paths.clear()
-        self._current_match = -1
-        self.match_label.setText("0/0")
-        self.tree.clearSelection()
 
     def find_paths_in_data(
         self, term: str, obj: Any = None, path: Tuple[str, ...] = ()
@@ -495,12 +343,12 @@ class JsonInspector(QtWidgets.QMainWindow):
         if item.data(0, QtCore.Qt.ItemDataRole.UserRole):
             return
 
-        raw_items = prepare_items(self._get_obj_by_path(path))
+        raw_items = Helper.prepare_items(self._get_obj_by_path(path))
         self._cache[path] = raw_items
         self._add_children(item, raw_items)
         item.setData(0, QtCore.Qt.ItemDataRole.UserRole, True)
 
-    def _item_for_path(self, path: Tuple[str | int, ...]) -> QtWidgets.QTreeWidgetItem | None:
+    def item_for_path(self, path: Tuple[str | int, ...]) -> QtWidgets.QTreeWidgetItem | None:
         item: QtWidgets.QTreeWidgetItem | None = self.tree.topLevelItem(0)
         assert item is not None, "Root item should not be None"
         accumulated: List[str] = []

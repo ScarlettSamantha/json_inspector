@@ -1,4 +1,4 @@
-from save_inspect_gui import JsonInspector
+from gui import JsonInspector
 
 from argparse import ArgumentParser, Namespace
 import sys
