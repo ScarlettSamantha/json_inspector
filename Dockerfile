@@ -33,6 +33,7 @@ COPY . /app
 ENTRYPOINT ["bash", "-lc"]
 CMD ["python3 --version \
     && python3 -m briefcase update -r \
+    && python3 -m briefcase update --update-resources \
     && python3 -m briefcase build linux \
     && python3 -m briefcase package linux \
     && mkdir -p builds \

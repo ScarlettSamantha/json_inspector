@@ -14,6 +14,7 @@ formal_name = "Json inspector"
 description = "A tool to inspect and edit JSON files."
 long_description = "A tool to inspect and edit JSON files, providing a user-friendly interface for viewing and modifying JSON data. with a easy to use interface."
 sources = ["json_inspector"]
+icon = "json_inspector/assets/application_icon_512.png"
 bundle = "nl.scarlettbytes.json-inspector"
 entry_point = "main:main"
 license.file = "LICENSE"
