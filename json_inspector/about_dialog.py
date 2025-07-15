@@ -6,7 +6,7 @@ class AboutDialog(QtWidgets.QDialog):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("About JSON Inspector")
-        self.setMinimumSize(400, 200)
+        self.setMinimumSize(450, 200)
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -32,7 +32,7 @@ class AboutDialog(QtWidgets.QDialog):
         layout.addWidget(repo_label)
 
         license_label = QtWidgets.QLabel(
-            f"Copyright © {str(QtCore.QDate.currentDate().year())} Scarlett Verheul. Licensed under GNU GPL v3",
+            f"Copyright © {str(QtCore.QDate.currentDate().year())} Scarlett Verheul.\nLicensed under GNU GPL v3",
             self,
         )
         license_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)

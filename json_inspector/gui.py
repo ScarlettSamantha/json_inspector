@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Tuple, Union
 from edit_value_dialog import EditValueDialog
 from about_dialog import AboutDialog
 from load_children_worker import LoadChildrenWorker
+from settings_dialog import SettingsDialog
 from helper import Helper
 from search import Search
 from manager import JsonManager
@@ -50,6 +51,7 @@ class JsonInspector(QtWidgets.QMainWindow):
         assert menu_bar is not None, "Menu bar should not be None"
 
         file_menu: QtWidgets.QMenu | None = menu_bar.addMenu("File")
+        settings_menu: QtWidgets.QMenu | None = menu_bar.addMenu("Settings")
         about_menu: QtWidgets.QMenu | None = menu_bar.addMenu("About")
 
         assert file_menu is not None, "File menu should not be None"
@@ -57,16 +59,24 @@ class JsonInspector(QtWidgets.QMainWindow):
         open_action: QtGui.QAction | None = file_menu.addAction("Open…")  # type: ignore
         open_action.setShortcut("Ctrl+O")  # type: ignore
         open_action.triggered.connect(self._open_file)  # type: ignore
+
         save_action: QtGui.QAction | None = file_menu.addAction("Save")  # type: ignore
         save_action.setShortcut("Ctrl+S")  # type: ignore
         save_action.triggered.connect(self._save_file)  # type: ignore
+
         save_as_action: QtGui.QAction | None = file_menu.addAction("Save As…")  # type: ignore
         save_as_action.setShortcut("Ctrl+Shift+S")  # type: ignore
         save_as_action.triggered.connect(self._save_as_file)  # type: ignore
+
         file_menu.addSeparator()
+
         exit_action: QtGui.QAction | None = file_menu.addAction("Exit")  # type: ignore
         exit_action.setShortcut("Ctrl+Q")  # type: ignore
         exit_action.triggered.connect(self.close)  # type: ignore
+
+        settings_action: QtGui.QAction | None = settings_menu.addAction("Settings…")  # type: ignore
+        settings_action.setShortcut("Ctrl+P")  # type: ignore
+        settings_action.triggered.connect(lambda: SettingsDialog(self).exec())  # type: ignore
 
         about_action = about_menu.addAction("About")  # type: ignore
         about_action.triggered.connect(self.show_about_dialog)  # type: ignore
