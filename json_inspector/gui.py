@@ -3,7 +3,7 @@ from edit_value_dialog import EditValueDialog
 from about_dialog import AboutDialog
 from load_children_worker import LoadChildrenWorker
 from settings_dialog import SettingsDialog
-from helper import Helper
+from helper import Helper, OSHelper
 from search import Search
 from manager import JsonManager
 from PyQt6 import QtWidgets, QtGui, QtCore
@@ -32,6 +32,8 @@ class JsonInspector(QtWidgets.QMainWindow):
         self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
         self.application_icon = QtGui.QIcon(str((Helper.assets_path() / "application_icon_512.png").resolve()))
 
+        self.footer_update_clock = QtCore.QTimer(self)
+
         self.setWindowTitle(f"Json Inspector <{path}>")
         QtCore.QCoreApplication.setApplicationName("Json Inspector")
         QtWidgets.QApplication.setWindowIcon(self.application_icon)
@@ -52,6 +54,8 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.clear_btn.clicked.connect(self._search_controller.clear)  # type: ignore
         self.prev_btn.clicked.connect(lambda: self._search_controller.step(-1))  # type: ignore
         self.next_btn.clicked.connect(lambda: self._search_controller.step(+1))  # type: ignore
+        self.footer_update_clock.timeout.connect(self.update_footer)  # type: ignore
+        self.footer_update_clock.start(5000)
 
     def _build_ui(self) -> None:
         menu_bar: QtWidgets.QMenuBar | None = self.menuBar()
@@ -128,6 +132,19 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.prop_table.itemDoubleClicked.connect(self._on_prop_double_click)  # type: ignore
         splitter.addWidget(self.prop_table)
         splitter.setSizes([500, 1000])  #    type: ignore
+        self.footer = QtWidgets.QStatusBar()
+        self.setStatusBar(self.footer)
+
+        self.loaded_label = QtWidgets.QLabel(f"Loaded {self.json_manager.get_total_count()} items")
+        self.footer.addWidget(self.loaded_label, 1)
+
+        self.memory_usage_label = QtWidgets.QLabel(f"Memory Usage: {OSHelper.get_memory_usage_human()}")
+        self.footer.addPermanentWidget(self.memory_usage_label)
+
+    def update_footer(self) -> None:
+        total = self.json_manager.get_total_count(cache=True)
+        self.loaded_label.setText(f"Loaded {total} items")
+        self.memory_usage_label.setText(f"Memory Usage: {OSHelper.get_memory_usage_human()}")
 
     def show_about_dialog(self) -> None:
         dlg = AboutDialog(self)
@@ -185,8 +202,6 @@ class JsonInspector(QtWidgets.QMainWindow):
         items: List[Tuple[Union[str, int], str, str, bool]],
         path_tuple: Tuple[Union[str, int], ...],
     ) -> None:
-        self._cache[path_tuple] = items
-
         self._add_children(parent_item, items)
         parent_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, True)
 
@@ -318,6 +333,7 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.prop_table.clearContents()
         self.prop_table.setRowCount(0)
         self._populate_tree()
+        self.update_footer()
 
     def _save_file(self) -> None:
         self.json_manager.save(self._current_path)

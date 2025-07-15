@@ -1,4 +1,5 @@
 import gzip
+import os
 import sys
 import json
 from typing import Any, List, Tuple, Union
@@ -6,6 +7,8 @@ import platform
 import subprocess
 from pathlib import Path
 from typing import ClassVar
+
+import psutil
 
 
 class Helper:
@@ -136,3 +139,17 @@ class OSHelper:
             if result.returncode == 0:
                 return result.stdout.strip() == cls.DESKTOP_FILE.name
             return False
+
+    @classmethod
+    def get_memory_usage_bytes(cls) -> int:
+        proc = psutil.Process(os.getpid())
+        return proc.memory_info().rss
+
+    @classmethod
+    def get_memory_usage_human(cls) -> str:
+        bytes_used = cls.get_memory_usage_bytes()
+        for unit in ("bytes", "KB", "MB", "GB", "TB"):
+            if bytes_used < 1024 or unit == "TB":
+                return f"{bytes_used:.2f} {unit}"
+            bytes_used /= 1024.0
+        return f"{bytes_used:.2f} TB"
