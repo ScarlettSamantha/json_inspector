@@ -1,6 +1,6 @@
 [tool.briefcase]
 project_name = "Json Inspector"
-version = "1.0.0"
+version = "0.2.0"
 package = "nl.scarlettbytes.json_inspector"
 bundle = "nl.scarlettbytes.json_inspector"
 author = "Scarlett Samantha Verheul"
@@ -23,18 +23,6 @@ requires = [
 ]
 assets = [
   "assets",
-  "exceptions",
-  "gameplay",
-  "helpers",
-  "i18n",
-  "managers",
-  "menus",
-  "mixins",
-  "system",
-  "world",
-  "assets",
-  "saves",
-  "libs",
 ]
 
 [tool.poetry]
