@@ -19,7 +19,8 @@ entry_point = "main:main"
 license.file = "LICENSE"
 requires = [
   "ujson",
-  "PyQt6"
+  "PyQt6",
+  "psutil",
 ]
 assets = [
   "assets",
