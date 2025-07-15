@@ -59,6 +59,7 @@ It uses little resources except when loading, writing and searching, for hardwar
 - Quad core processor (to keep it responsive).
 
 These requirements are only needed if you are running the script directly as python:
+
 **Runtime**  
 - Qt6  
 - orjson (optional; falls back to stdlib json)  
