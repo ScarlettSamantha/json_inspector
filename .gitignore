@@ -29,3 +29,6 @@ __pycache__
 *.idea
 *.vscode
 samples/
+builds/
+build/
+dist/

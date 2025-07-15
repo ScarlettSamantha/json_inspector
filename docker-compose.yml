@@ -1,0 +1,12 @@
+---
+services:
+  json_inspector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: json_inspector:latest
+    container_name: json_inspector_container
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
