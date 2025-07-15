@@ -94,6 +94,7 @@ class JsonInspector(QtWidgets.QMainWindow):
 
         self.search_edit = QtWidgets.QLineEdit()
         self.search_edit.setPlaceholderText("Find key or value…")
+        self.search_edit.returnPressed.connect(lambda: self._search_controller.perform_search(self.search_edit.text()))  # type: ignore
         tool_bar.addWidget(self.search_edit)
 
         self.search_btn = QtWidgets.QPushButton("Search")
