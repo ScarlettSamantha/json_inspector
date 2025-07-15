@@ -24,13 +24,21 @@ COLOR_MAP: Dict[str, str] = {
 class JsonInspector(QtWidgets.QMainWindow):
     def __init__(self, path: str) -> None:
         super().__init__()
+
         self.json_manager = JsonManager(path)
         self._current_path = path
         self.json_manager.data = Helper.load_json(path)
         self._cache: Dict[Tuple[Union[str, int], ...], List[Any]] = {}
         self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
+        self.application_icon = QtGui.QIcon(str((Helper.assets_path() / "application_icon_512.png").resolve()))
 
         self.setWindowTitle(f"Json Inspector <{path}>")
+        QtCore.QCoreApplication.setApplicationName("Json Inspector")
+        QtWidgets.QApplication.setWindowIcon(self.application_icon)
+        QtGui.QGuiApplication.setDesktopFileName("Json Inspector")
+        QtGui.QGuiApplication.setWindowIcon(self.application_icon)
+
+        self.setWindowIcon(self.application_icon)
         self.resize(1400, 800)
         self._build_ui()
 
@@ -301,6 +309,7 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.json_manager.load(path)
 
         self.setWindowTitle(f"Json Inspector <{self.json_manager.path}>")
+        self.setWindowIcon(self.application_icon)
         self._cache.clear()
         self._current_match = -1
         self.search_edit.clear()

@@ -38,6 +38,14 @@ class Helper:
                 items.append((i, type(v).__name__, repr(v), isinstance(v, (dict, list, tuple, set))))  # type: ignore
         return items
 
+    @staticmethod
+    def base_path() -> Path:
+        return Path(sys.argv[0]).parent if hasattr(sys, "frozen") else Path(__file__).parent
+
+    @staticmethod
+    def assets_path() -> Path:
+        return Helper.base_path() / "assets"
+
 
 class OSHelper:
     APP_ID: ClassVar[str] = "JsonInspector"
@@ -93,10 +101,12 @@ class OSHelper:
                 [
                     "[Desktop Entry]",
                     f"Name={APPLICATION_NAME}",
-                    f"Exec={cls.EXECUTABLE} %f",
+                    f"Exec=/usr/bin/python3 {cls.EXECUTABLE} %f",
                     "Type=Application",
                     f"MimeType={cls.MIME_TYPE};",
                     "NoDisplay=false",
+                    f"Icon={Helper.assets_path() / 'application_icon_512.png'}",
+                    "StartupWMClass=JsonInspector",
                 ]
             )
         )

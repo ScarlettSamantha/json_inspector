@@ -1,11 +1,16 @@
 from typing import Any, Tuple
 from PyQt6 import QtWidgets
+from PyQt6.QtGui import QIcon
+
+from json_inspector.helper import Helper
 
 
 class EditValueDialog(QtWidgets.QDialog):
     def __init__(self, parent: QtWidgets.QWidget, current_type: str, current_val: str) -> None:
         super().__init__(parent)
+        self.application_icon = QIcon(str((Helper.assets_path() / "application_icon_512.png").resolve()))
         self.setWindowTitle("Edit Value")
+        self.setWindowIcon(self.application_icon)
         self.result_value: Tuple[str, Any] = (current_type, current_val)
 
         self.setMinimumWidth(500)

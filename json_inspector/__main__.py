@@ -4,12 +4,15 @@
 import os
 import sys
 
+from PyQt6.QtGui import QGuiApplication, QIcon, QWindow
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from gui import JsonInspector
 
 from argparse import ArgumentParser, Namespace
 from PyQt6 import QtWidgets
+from helper import Helper
 
 
 def main() -> None:
@@ -18,6 +21,10 @@ def main() -> None:
     a: Namespace = parser.parse_args()
 
     app = QtWidgets.QApplication(sys.argv)
+    icon = QIcon(str((Helper.assets_path() / "application_icon_512.png").resolve()))
+    app.setWindowIcon(icon)
+    app.setDesktopFileName("Json Inspector")
+    QGuiApplication.setDesktopFileName("Json Inspector")
 
     if not a.path:
         a.path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -28,6 +35,13 @@ def main() -> None:
 
     win = JsonInspector(a.path)
     win.show()
+    win.setWindowIcon(icon)
+    QGuiApplication.setWindowIcon(icon)
+    QGuiApplication.setApplicationName("Json Inspector")
+    QGuiApplication.setDesktopFileName("Json Inspector")
+    wh: QWindow | None = win.windowHandle()  # for wayland support
+    if wh:
+        wh.setIcon(icon)
     try:
         sys.exit(app.exec())
     except KeyboardInterrupt:
