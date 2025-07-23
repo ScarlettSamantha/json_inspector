@@ -1,3 +1,4 @@
+import json
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple, Union
 from edit_value_dialog import EditValueDialog
 from about_dialog import AboutDialog
@@ -29,38 +30,38 @@ class Gui(QtWidgets.QMainWindow):
         super().__init__()
         self.manager: "JsonManager" = manager
         self._current_path = manager.path
-
-    def load(self) -> None:
-        self.manager.data = Helper.load_json(self._current_path)
-
+        self.application_icon = QtGui.QIcon(str((Helper.assets_path() / "application_icon_512.png").resolve()))
         self._cache: Dict[Tuple[Union[str, int], ...], List[Any]] = {}
         self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
-        self.application_icon = QtGui.QIcon(str((Helper.assets_path() / "application_icon_512.png").resolve()))
 
-        self.footer_update_clock = QtCore.QTimer(self)
-
+    def load(self) -> None:
         self.setWindowTitle(f"Json Inspector <{self._current_path}>")
+
         QtCore.QCoreApplication.setApplicationName("Json Inspector")
-        QtWidgets.QApplication.setWindowIcon(self.application_icon)
         QtGui.QGuiApplication.setDesktopFileName("Json Inspector")
         QtGui.QGuiApplication.setWindowIcon(self.application_icon)
 
-        self.setWindowIcon(self.application_icon)
-        self.resize(1400, 800)
-        self._build_ui()
-
-        self.tree.itemExpanded.connect(self._on_item_expanded)  # type: ignore
-        self._populate_tree()
-
         assert self._threadpool is not None, "Thread pool should not be None"
 
+        self._build_ui()
+
         self._search_controller = Search(self.manager, self._threadpool)
+
         self.search_btn.clicked.connect(lambda: self._search_controller.perform_search(self.search_edit.text()))  # type: ignore
         self.clear_btn.clicked.connect(self._search_controller.clear)  # type: ignore
         self.prev_btn.clicked.connect(lambda: self._search_controller.step(-1))  # type: ignore
         self.next_btn.clicked.connect(lambda: self._search_controller.step(+1))  # type: ignore
+
+        self.footer_update_clock = QtCore.QTimer(self)
         self.footer_update_clock.timeout.connect(self.update_footer)  # type: ignore
         self.footer_update_clock.start(5000)
+
+        self.setWindowIcon(self.application_icon)
+        self.resize(1400, 800)
+
+        self.tree.itemExpanded.connect(self._on_item_expanded)  # type: ignore
+
+        self.populate_tree()
 
     def _build_ui(self) -> None:
         menu_bar: QtWidgets.QMenuBar | None = self.menuBar()
@@ -75,7 +76,7 @@ class Gui(QtWidgets.QMainWindow):
 
         open_action: QtGui.QAction | None = file_menu.addAction("Open…")  # type: ignore
         open_action.setShortcut("Ctrl+O")  # type: ignore
-        open_action.triggered.connect(self._open_file)  # type: ignore
+        open_action.triggered.connect(self.open_file)  # type: ignore
 
         save_action: QtGui.QAction | None = file_menu.addAction("Save")  # type: ignore
         save_action.setShortcut("Ctrl+S")  # type: ignore
@@ -155,7 +156,7 @@ class Gui(QtWidgets.QMainWindow):
         dlg = AboutDialog(self)
         dlg.exec()
 
-    def _populate_tree(self) -> None:
+    def populate_tree(self) -> None:
         self.tree.clear()
         root = QtWidgets.QTreeWidgetItem(["root", type(self.manager.data).__name__])
         self.tree.addTopLevelItem(root)
@@ -320,7 +321,7 @@ class Gui(QtWidgets.QMainWindow):
             elif isinstance(parent_obj, list):
                 parent_obj[key] = new_val  # type: ignore[index]
 
-    def _open_file(self) -> None:
+    def open_file(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Open File", "", "JSON files (*.json *.gz);;All files (*)"
         )
@@ -337,11 +338,51 @@ class Gui(QtWidgets.QMainWindow):
         self.match_label.setText("0/0")
         self.prop_table.clearContents()
         self.prop_table.setRowCount(0)
-        self._populate_tree()
+        self.populate_tree()
+        self.update_footer()
+
+    def reload_popup(self) -> None:
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+        msg_box.setWindowTitle("File Reloaded")
+        msg_box.setText("The file on disk has been edited. The contents have been reloaded.")
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+        msg_box.exec()
+
+    def decoding_failed_popup(self, error: json.JSONDecodeError) -> None:
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setIcon(QtWidgets.QMessageBox.Icon.Critical)
+        msg_box.setWindowTitle("Decoding Failed")
+        msg_box.setText(f"Failed to decode JSON file: {error.msg}")
+        msg_box.setDetailedText(f"Error at line {error.lineno}, column {error.colno}.")
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+        msg_box.exec()
+
+    def reload(self) -> None:
+        self.manager.load(auto_clear=False)
+        self._current_path = self.manager.path
+        self.setWindowTitle(f"Json Inspector <{self._current_path}>")
+        self._cache.clear()
+        self.populate_tree()
+        self.update_footer()
+
+    def clear(self) -> None:
+        self._cache.clear()
+        self._current_path = ""
+        self.setWindowTitle("Json Inspector")
+        self.tree.clear()
+        self.prop_table.clearContents()
+        self.prop_table.setRowCount(0)
+        self.search_edit.clear()
+        self.match_label.setText("0/0")
         self.update_footer()
 
     def _save_file(self) -> None:
+        if not self._current_path:
+            self._save_as_file()
+            return
         self.manager.save(self._current_path)
+        self.setWindowTitle(f"Json Inspector <{self.manager.path}>")
 
     def _save_as_file(self) -> None:
         path, _ = QtWidgets.QFileDialog.getSaveFileName(

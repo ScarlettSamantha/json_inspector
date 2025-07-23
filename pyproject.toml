@@ -1,6 +1,6 @@
 [tool.briefcase]
 project_name = "Json Inspector"
-version = "0.2.0"
+version = "0.3.0"
 package = "nl.scarlettbytes.json-inspector"
 bundle = "nl.scarlettbytes.json-inspector"
 author = "Scarlett Samantha Verheul"
@@ -21,7 +21,9 @@ license.file = "LICENSE"
 requires = [
   "ujson",
   "PyQt6",
+  "PyQt6-sip",
   "psutil",
+  "watchdog",
 ]
 assets = [
   "assets",

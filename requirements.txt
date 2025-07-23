@@ -1,3 +1,5 @@
 PyQt6
+PyQt6-sip
 ujson
 psutil
+watchdog

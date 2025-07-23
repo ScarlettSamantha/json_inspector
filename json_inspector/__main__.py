@@ -26,14 +26,7 @@ def main() -> None:
     app.setDesktopFileName("Json Inspector")
     QGuiApplication.setDesktopFileName("Json Inspector")
 
-    if not a.path:
-        a.path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            None, "Open JSON", filter="JSON files (*.json *.json.gz);;All files (*)"
-        )
-        if not a.path:
-            sys.exit(0)
-
-    manager = JsonManager(a.path)
+    manager = JsonManager(a.path if a.path else None)
     win = manager.gui
     win.show()
     win.setWindowIcon(icon)

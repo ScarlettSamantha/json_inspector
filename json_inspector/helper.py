@@ -2,6 +2,7 @@ import gzip
 import os
 import sys
 import json
+import time
 from typing import Any, List, Tuple, Union
 import platform
 import subprocess
@@ -14,11 +15,24 @@ import psutil
 class Helper:
     @staticmethod
     def load_json(path: str) -> Any:
-        if path.endswith(".gz"):
-            with gzip.open(path, "rt", encoding="utf-8") as f:
-                return json.load(f)
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        for attempt in range(3):
+            try:
+                if path.endswith(".gz"):
+                    with gzip.open(path, "rt", encoding="utf-8") as f:
+                        return json.load(f)
+                else:
+                    with open(path, "r", encoding="utf-8") as f:
+                        return json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                time.sleep(1)
+                if attempt < 2:
+                    print(f"Attempt {attempt + 1} failed: {e}. Retrying...")
+                    continue
+                else:
+                    if isinstance(e, json.JSONDecodeError):
+                        raise e
+                    else:
+                        raise OSError(f"Failed to read JSON file {path} after 3 attempts: {e}")
 
     @staticmethod
     def save_json(data: Any, path: str, indents: int = 4) -> None:
