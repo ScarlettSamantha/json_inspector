@@ -1,11 +1,14 @@
-from typing import Any, Dict, List, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple, Union
 from edit_value_dialog import EditValueDialog
 from about_dialog import AboutDialog
 from load_children_worker import LoadChildrenWorker
 from settings_dialog import SettingsDialog
 from helper import Helper, OSHelper
 from search import Search
-from manager import JsonManager
+
+if TYPE_CHECKING:
+    from manager import JsonManager
+
 from PyQt6 import QtWidgets, QtGui, QtCore
 
 COLOR_MAP: Dict[str, str] = {
@@ -21,20 +24,22 @@ COLOR_MAP: Dict[str, str] = {
 }
 
 
-class JsonInspector(QtWidgets.QMainWindow):
-    def __init__(self, path: str) -> None:
+class Gui(QtWidgets.QMainWindow):
+    def __init__(self, manager: "JsonManager") -> None:
         super().__init__()
+        self.manager: "JsonManager" = manager
+        self._current_path = manager.path
 
-        self.json_manager = JsonManager(path)
-        self._current_path = path
-        self.json_manager.data = Helper.load_json(path)
+    def load(self) -> None:
+        self.manager.data = Helper.load_json(self._current_path)
+
         self._cache: Dict[Tuple[Union[str, int], ...], List[Any]] = {}
         self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
         self.application_icon = QtGui.QIcon(str((Helper.assets_path() / "application_icon_512.png").resolve()))
 
         self.footer_update_clock = QtCore.QTimer(self)
 
-        self.setWindowTitle(f"Json Inspector <{path}>")
+        self.setWindowTitle(f"Json Inspector <{self._current_path}>")
         QtCore.QCoreApplication.setApplicationName("Json Inspector")
         QtWidgets.QApplication.setWindowIcon(self.application_icon)
         QtGui.QGuiApplication.setDesktopFileName("Json Inspector")
@@ -49,7 +54,7 @@ class JsonInspector(QtWidgets.QMainWindow):
 
         assert self._threadpool is not None, "Thread pool should not be None"
 
-        self._search_controller = Search(self, self._threadpool)
+        self._search_controller = Search(self.manager, self._threadpool)
         self.search_btn.clicked.connect(lambda: self._search_controller.perform_search(self.search_edit.text()))  # type: ignore
         self.clear_btn.clicked.connect(self._search_controller.clear)  # type: ignore
         self.prev_btn.clicked.connect(lambda: self._search_controller.step(-1))  # type: ignore
@@ -135,14 +140,14 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.footer = QtWidgets.QStatusBar()
         self.setStatusBar(self.footer)
 
-        self.loaded_label = QtWidgets.QLabel(f"Loaded {self.json_manager.get_total_count()} items")
+        self.loaded_label = QtWidgets.QLabel(f"Loaded {self.manager.get_total_count()} items")
         self.footer.addWidget(self.loaded_label, 1)
 
         self.memory_usage_label = QtWidgets.QLabel(f"Memory Usage: {OSHelper.get_memory_usage_human()}")
         self.footer.addPermanentWidget(self.memory_usage_label)
 
     def update_footer(self) -> None:
-        total = self.json_manager.get_total_count(cache=True)
+        total = self.manager.get_total_count(cache=True)
         self.loaded_label.setText(f"Loaded {total} items")
         self.memory_usage_label.setText(f"Memory Usage: {OSHelper.get_memory_usage_human()}")
 
@@ -152,9 +157,9 @@ class JsonInspector(QtWidgets.QMainWindow):
 
     def _populate_tree(self) -> None:
         self.tree.clear()
-        root = QtWidgets.QTreeWidgetItem(["root", type(self.json_manager.data).__name__])
+        root = QtWidgets.QTreeWidgetItem(["root", type(self.manager.data).__name__])
         self.tree.addTopLevelItem(root)
-        if isinstance(self.json_manager.data, (dict, list, tuple, set)):
+        if isinstance(self.manager.data, (dict, list, tuple, set)):
             placeholder = QtWidgets.QTreeWidgetItem(["Loading...", ""])
             root.addChild(placeholder)
             root.setChildIndicatorPolicy(QtWidgets.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
@@ -243,7 +248,7 @@ class JsonInspector(QtWidgets.QMainWindow):
             parent_item.addChild(child)
 
     def _get_obj_by_path(self, path: Tuple[Union[str, int], ...]) -> Any:
-        obj = self.json_manager.data
+        obj = self.manager.data
         for k in path:
             if isinstance(obj, dict):
                 obj = obj[k]  # type: ignore[index]
@@ -322,9 +327,9 @@ class JsonInspector(QtWidgets.QMainWindow):
         if not path:
             return
 
-        self.json_manager.load(path)
+        self.manager.load(path)
 
-        self.setWindowTitle(f"Json Inspector <{self.json_manager.path}>")
+        self.setWindowTitle(f"Json Inspector <{self.manager.path}>")
         self.setWindowIcon(self.application_icon)
         self._cache.clear()
         self._current_match = -1
@@ -336,51 +341,16 @@ class JsonInspector(QtWidgets.QMainWindow):
         self.update_footer()
 
     def _save_file(self) -> None:
-        self.json_manager.save(self._current_path)
+        self.manager.save(self._current_path)
 
     def _save_as_file(self) -> None:
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save JSON", self.json_manager.path, "JSON files (*.json *.gz);;All files (*)"
+            self, "Save JSON", self.manager.path, "JSON files (*.json *.gz);;All files (*)"
         )
         if not path:
             return
-        self.json_manager.save_as(path)
-        self.setWindowTitle(f"Json Inspector <{self.json_manager.path}>")
-
-    def find_paths_in_data(
-        self, term: str, obj: Any = None, path: Tuple[str, ...] = ()
-    ) -> List[Tuple[Tuple[Union[str, int], ...], str]]:
-        if obj is None:
-            obj = self.json_manager.data
-        results: List[Tuple[Tuple[Union[str, int], ...], str]] = []
-
-        if isinstance(obj, dict):
-            for k, v in obj.items():  # type: ignore
-                key_str = str(k).lower()  # type: ignore
-                is_cont = isinstance(v, (dict, list, tuple, set))
-                val_str = (repr(v) if not isinstance(v, str) else v).lower()  # type: ignore
-                p = path + (k,)  # type: ignore
-
-                if term == key_str or (not is_cont and term == val_str):
-                    results.append((p, val_str if term == val_str else key_str))  # type: ignore
-
-                if is_cont:
-                    results += self.find_paths_in_data(term, v, p)  # type: ignore
-
-        elif isinstance(obj, (list, tuple, set)):
-            for i, v in enumerate(obj):  # type: ignore
-                key_str: str = str(i).lower()
-                is_cont: bool = isinstance(v, (dict, list, tuple, set))
-                val_str: str = repr(v).lower()  # type: ignore
-                p = path + (i,)
-
-                if term == key_str or (not is_cont and term == val_str):
-                    results.append((p, val_str if term == val_str else key_str))
-
-                if isinstance(v, (dict, list, tuple, set)):
-                    results += self.find_paths_in_data(term, v, p)  # type: ignore
-
-        return results
+        self.manager.save_as(path)
+        self.setWindowTitle(f"Json Inspector <{self.manager.path}>")
 
     def _load_children_sync(self, item: QtWidgets.QTreeWidgetItem, path: Tuple[str, ...]) -> None:
         if item.data(0, QtCore.Qt.ItemDataRole.UserRole):

@@ -8,7 +8,7 @@ from PyQt6.QtGui import QGuiApplication, QIcon, QWindow
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from gui import JsonInspector
+from manager import JsonManager
 
 from argparse import ArgumentParser, Namespace
 from PyQt6 import QtWidgets
@@ -33,7 +33,8 @@ def main() -> None:
         if not a.path:
             sys.exit(0)
 
-    win = JsonInspector(a.path)
+    manager = JsonManager(a.path)
+    win = manager.gui
     win.show()
     win.setWindowIcon(icon)
     QGuiApplication.setWindowIcon(icon)

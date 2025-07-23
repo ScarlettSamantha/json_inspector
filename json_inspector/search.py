@@ -3,14 +3,14 @@ from PyQt6 import QtWidgets, QtCore
 from search_worker import SearchWorker
 
 if TYPE_CHECKING:
-    from gui import JsonInspector
+    from manager import JsonManager
 
 
 class Search(QtCore.QObject):
-
-    def __init__(self, inspector: "JsonInspector", threadpool: QtCore.QThreadPool) -> None:
+    def __init__(self, manager: "JsonManager", threadpool: QtCore.QThreadPool) -> None:
         super().__init__()
-        self._inspector: "JsonInspector" = inspector
+        self._manager: "JsonManager" = manager
+        self._gui = manager.gui
         self._threadpool: QtCore.QThreadPool = threadpool
         self._matches: List[Tuple[Union[str, int], ...]] = []
         self._current_index: int = -1
@@ -20,22 +20,22 @@ class Search(QtCore.QObject):
         if not term:
             return self.clear()
 
-        dlg = QtWidgets.QProgressDialog("Searching…", None, 0, 0, self._inspector)
+        dlg = QtWidgets.QProgressDialog("Searching…", None, 0, 0, self._gui)
         dlg.setWindowTitle("Please wait")
         dlg.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
         dlg.setCancelButton(None)
         dlg.setMinimumDuration(0)
         dlg.show()
 
-        worker = SearchWorker(self._inspector, term)
+        worker = SearchWorker(self._manager, term)
         worker.signals.finished.connect(lambda matches: self._on_search_finished(matches, dlg))  # type: ignore
         self._threadpool.start(worker)  #    type: ignore
 
     def clear(self) -> None:
         self._matches.clear()
         self._current_index = -1
-        self._inspector.match_label.setText("0/0")
-        self._inspector.tree.clearSelection()
+        self._gui.match_label.setText("0/0")
+        self._gui.tree.clearSelection()
 
     def step(self, delta: int) -> None:
         if not self._matches:
@@ -52,22 +52,22 @@ class Search(QtCore.QObject):
         self._matches = [path for path, _ in matches]
         total = len(self._matches)
         self._current_index = -1
-        self._inspector.match_label.setText(f"0/{total}")
+        self._gui.match_label.setText(f"0/{total}")
         if total:
             self.step(0)
 
     def _goto_current(self) -> None:
         idx = self._current_index
         path = self._matches[idx]
-        item: QtWidgets.QTreeWidgetItem | None = self._inspector.item_for_path(path=path)
+        item: QtWidgets.QTreeWidgetItem | None = self._gui.item_for_path(path=path)
         if not item:
             return
 
         parent: QtWidgets.QTreeWidgetItem | None = item.parent()
         while parent:
-            self._inspector.tree.expandItem(parent)
+            self._gui.tree.expandItem(parent)
             parent = parent.parent()
 
-        self._inspector.tree.setCurrentItem(item)
-        self._inspector.tree.scrollToItem(item)
-        self._inspector.match_label.setText(f"{idx + 1}/{len(self._matches)}")
+        self._gui.tree.setCurrentItem(item)
+        self._gui.tree.scrollToItem(item)
+        self._gui.match_label.setText(f"{idx + 1}/{len(self._matches)}")
