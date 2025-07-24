@@ -88,25 +88,81 @@ class OSHelper:
     @classmethod
     def _register_windows(cls) -> None:
         import winreg
+        import ctypes
 
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.json") as ext:  # type: ignore
-            winreg.SetValue(ext, "", winreg.REG_SZ, f"{cls.APP_ID}File")  # type: ignore
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{cls.APP_ID}File") as fk:  # type: ignore
-            winreg.SetValue(fk, "", winreg.REG_SZ, "JSON Document")  # type: ignore
-            with winreg.CreateKey(fk, "DefaultIcon") as ik:  # type: ignore
-                winreg.SetValue(ik, "", winreg.REG_SZ, f"{cls.EXECUTABLE},0")  # type: ignore , windows calls always have this issue on linux
-            with winreg.CreateKey(fk, r"shell\open\command") as ck:  # type: ignore
-                winreg.SetValue(ck, "", winreg.REG_SZ, f'"{cls.EXECUTABLE}" "%1"')  # type: ignore , windows calls always have this issue on linux
+        exe_path = str(cls.EXECUTABLE)
+        progid = f"{cls.APP_ID}File"
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.json") as ext:
+            winreg.SetValueEx(ext, "", 0, winreg.REG_SZ, progid)
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{progid}") as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "JSON Document")
+
+            with winreg.CreateKey(key, "DefaultIcon") as icon:
+                winreg.SetValueEx(icon, "", 0, winreg.REG_SZ, f"{exe_path},0")
+
+            with winreg.CreateKey(key, r"shell\open\command") as cmd:
+                winreg.SetValueEx(cmd, "", 0, winreg.REG_SZ, f'"{exe_path}" "%1"')
+
+        cap_key = (
+            rf"Software\Classes\Applications\{Path(exe_path).name}"
+            r"\Capabilities"
+        )
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_key) as cap:
+            winreg.SetValueEx(cap, "ApplicationName", 0, winreg.REG_SZ, "Json Inspector")
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_key + r"\FileAssociations") as fa:
+            winreg.SetValueEx(fa, ".json", 0, winreg.REG_SZ, cls.MIME_TYPE)
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_key + r"\DefaultIcon") as di:
+            winreg.SetValueEx(di, "", 0, winreg.REG_SZ, f"{exe_path},0")
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\RegisteredApplications") as reg:
+            winreg.SetValueEx(reg, cls.APP_ID, 0, winreg.REG_SZ, cap_key)
+
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
 
     @classmethod
     def _unregister_windows(cls) -> None:
         import winreg
+        import ctypes
 
         for key in (r".json", f"{cls.APP_ID}File"):
             try:
-                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{key}")  # type: ignore , windows calls always have this issue on linux
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, f"Software\\Classes\\{key}")
             except FileNotFoundError:
                 pass
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, "Software\\RegisteredApplications", 0, winreg.KEY_SET_VALUE
+            ) as reg:
+                winreg.DeleteValue(reg, cls.APP_ID)
+        except FileNotFoundError:
+            pass
+
+        exec_name = Path(str(cls.EXECUTABLE)).name
+        cap_root = f"Software\\Classes\\Applications\\{exec_name}\\Capabilities"
+
+        def _del_tree(root, subkey):
+            with winreg.OpenKey(root, subkey, 0, winreg.KEY_ALL_ACCESS) as k:  # type: ignore
+                i = 0
+                while True:
+                    try:
+                        child = winreg.EnumKey(k, 0)  # type: ignore
+                        _del_tree(root, subkey + "\\" + child)  # type: ignore
+                    except OSError:
+                        break
+                winreg.DeleteKey(root, subkey)
+
+        try:
+            _del_tree(winreg.HKEY_CURRENT_USER, cap_root)  # type: ignore
+        except FileNotFoundError:
+            pass
+
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
 
     @classmethod
     def _register_linux(cls) -> None:
