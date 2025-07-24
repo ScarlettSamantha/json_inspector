@@ -33,6 +33,7 @@ class Gui(QtWidgets.QMainWindow):
         self.application_icon = QtGui.QIcon(str((Helper.assets_path() / "application_icon_512.png").resolve()))
         self._cache: Dict[Tuple[Union[str, int], ...], List[Any]] = {}
         self._threadpool: QtCore.QThreadPool | None = QtCore.QThreadPool.globalInstance()
+        self._active_workers: list[LoadChildrenWorker] = []
 
     def load(self) -> None:
         self.setWindowTitle(f"Json Inspector <{self._current_path}>")
@@ -197,11 +198,25 @@ class Gui(QtWidgets.QMainWindow):
                 item.setData(0, QtCore.Qt.ItemDataRole.UserRole, True)
                 return
 
-            worker = LoadChildrenWorker(item, self._current_obj_from_item(item), path_tuple)
-            worker.signals.loaded.connect(self._on_children_loaded, QtCore.Qt.ConnectionType.QueuedConnection)  # type: ignore
+            worker = LoadChildrenWorker(item, obj=self._current_obj_from_item(item), path=path_tuple)
+            self._active_workers.append(worker)
+
+            def _cleanup_and_dispatch(
+                _sig_parent: QtWidgets.QTreeWidgetItem,
+                items: List[Tuple[Union[str, int], str, str, bool]],
+                path: Tuple[Union[str, int], ...],
+                wrk: LoadChildrenWorker = worker,
+                parent: QtWidgets.QTreeWidgetItem = item,
+            ) -> None:
+                try:
+                    self._on_children_loaded(parent, items, path)
+                finally:
+                    self._active_workers.remove(wrk)
+
+            worker.signals.loaded.connect(_cleanup_and_dispatch, QtCore.Qt.ConnectionType.QueuedConnection)  # type: ignore
             self._threadpool.start(worker)  # type: ignore
 
-    @QtCore.pyqtSlot(QtWidgets.QTreeWidgetItem, list, tuple)  # type: ignore
+    @QtCore.pyqtSlot(object, list, tuple)  # type: ignore
     def _on_children_loaded(
         self,
         parent_item: QtWidgets.QTreeWidgetItem,
@@ -219,7 +234,7 @@ class Gui(QtWidgets.QMainWindow):
                 w.signals.loaded.connect(self._on_cache_only, QtCore.Qt.ConnectionType.QueuedConnection)  # type: ignore
                 self._threadpool.start(w)  # type: ignore
 
-    @QtCore.pyqtSlot(QtWidgets.QTreeWidgetItem, list, tuple)  # type: ignore[no-untyped-def]
+    @QtCore.pyqtSlot(object, list, tuple)  # type: ignore[no-untyped-def]
     def _on_cache_only(
         self,
         parent_item: QtWidgets.QTreeWidgetItem,
@@ -246,7 +261,11 @@ class Gui(QtWidgets.QMainWindow):
                 child.addChild(placeholder)
                 child.setChildIndicatorPolicy(QtWidgets.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
 
-            parent_item.addChild(child)
+            try:
+                parent_item.addChild(child)
+            except RuntimeError as e:
+                print(f"Error adding child {key} to parent: {e}")
+                continue
 
     def _get_obj_by_path(self, path: Tuple[Union[str, int], ...]) -> Any:
         obj = self.manager.data

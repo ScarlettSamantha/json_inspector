@@ -1,9 +1,9 @@
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore
 
 
 class WorkerSignals(QtCore.QObject):
     loaded = QtCore.pyqtSignal(
-        QtWidgets.QTreeWidgetItem,
+        object,
         list,
         tuple,
     )

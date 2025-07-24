@@ -90,79 +90,93 @@ class OSHelper:
         import winreg
         import ctypes
 
-        exe_path = str(cls.EXECUTABLE)
         progid = f"{cls.APP_ID}File"
+        exe_path = str(cls.EXECUTABLE)
 
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.json") as ext:
-            winreg.SetValueEx(ext, "", 0, winreg.REG_SZ, progid)
+        if exe_path.lower().endswith(".py"):
+            exe_path = str((Path(exe_path).parent / "../run.py").resolve())
+            exe_path: str = exe_path[0].upper() + exe_path[1:]  # Ensure the path is capitalized for Windows
 
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{progid}") as key:
-            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "JSON Document")
+        launcher = sys.executable if exe_path.lower().endswith(".py") else exe_path
+        launcher = launcher[0].upper() + launcher[1:]  # Ensure the path is capitalized for Windows
 
-            with winreg.CreateKey(key, "DefaultIcon") as icon:
-                winreg.SetValueEx(icon, "", 0, winreg.REG_SZ, f"{exe_path},0")
+        if launcher.endswith("python.exe"):
+            launcher = launcher[:-10] + "pythonw.exe"
+            cmd = f'"{launcher}" "{exe_path}" "%1"'
+        elif launcher.endswith("pythonw.exe"):
+            cmd = f'"{launcher}" "{exe_path}" "%1"'
+        else:
+            cmd = f'"{launcher}" "%1"'
 
-            with winreg.CreateKey(key, r"shell\open\command") as cmd:
-                winreg.SetValueEx(cmd, "", 0, winreg.REG_SZ, f'"{exe_path}" "%1"')
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.json") as ext:  # type: ignore
+            winreg.SetValueEx(ext, "", 0, winreg.REG_SZ, progid)  # type: ignore
 
-        cap_key = (
-            rf"Software\Classes\Applications\{Path(exe_path).name}"
-            r"\Capabilities"
-        )
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{progid}") as key:  # type: ignore
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "JSON Document")  # type: ignore
+            with winreg.CreateKey(key, "DefaultIcon") as icon:  # type: ignore
+                winreg.SetValueEx(icon, "", 0, winreg.REG_SZ, f"{exe_path},0")  # type: ignore
 
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_key) as cap:
-            winreg.SetValueEx(cap, "ApplicationName", 0, winreg.REG_SZ, "Json Inspector")
+            with winreg.CreateKey(key, r"shell\open\command") as cmd_key:  # type: ignore
+                winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ, cmd)  # type: ignore
 
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_key + r"\FileAssociations") as fa:
-            winreg.SetValueEx(fa, ".json", 0, winreg.REG_SZ, cls.MIME_TYPE)
+        app_name = Path(exe_path).name
+        cap_path = rf"Software\Classes\Applications\{app_name}\Capabilities"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_path) as cap:  # type: ignore
+            winreg.SetValueEx(cap, "ApplicationName", 0, winreg.REG_SZ, "Json Inspector")  # type: ignore
 
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_key + r"\DefaultIcon") as di:
-            winreg.SetValueEx(di, "", 0, winreg.REG_SZ, f"{exe_path},0")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_path + r"\FileAssociations") as fa:  # type: ignore
+            winreg.SetValueEx(fa, ".json", 0, winreg.REG_SZ, cls.MIME_TYPE)  # type: ignore
 
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\RegisteredApplications") as reg:
-            winreg.SetValueEx(reg, cls.APP_ID, 0, winreg.REG_SZ, cap_key)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cap_path + r"\DefaultIcon") as di:  # type: ignore
+            winreg.SetValueEx(di, "", 0, winreg.REG_SZ, f"{exe_path},0")  # type: ignore
 
-        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\RegisteredApplications") as reg:  # type: ignore
+            winreg.SetValueEx(reg, cls.APP_ID, 0, winreg.REG_SZ, cap_path)  # type: ignore
+
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)  # type: ignore
 
     @classmethod
     def _unregister_windows(cls) -> None:
         import winreg
         import ctypes
 
-        for key in (r".json", f"{cls.APP_ID}File"):
+        for key, default_value in [(r".json", ""), (f"{cls.APP_ID}File", "")]:
             try:
-                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, f"Software\\Classes\\{key}")
-            except FileNotFoundError:
-                pass
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{key}") as reg_key:  # type: ignore
+                    winreg.SetValueEx(reg_key, "", 0, winreg.REG_SZ, default_value)  # type: ignore
+            except OSError as e:
+                print(f"Failed to reset key {key}: {e}")
 
         try:
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, "Software\\RegisteredApplications", 0, winreg.KEY_SET_VALUE
-            ) as reg:
-                winreg.DeleteValue(reg, cls.APP_ID)
+            with winreg.OpenKey(  # type: ignore
+                winreg.HKEY_CURRENT_USER,  # type: ignore
+                r"Software\RegisteredApplications",
+                0,
+                winreg.KEY_SET_VALUE,  # type: ignore
+            ) as reg:  # type: ignore
+                winreg.DeleteValue(reg, cls.APP_ID)  # type: ignore
         except FileNotFoundError:
             pass
 
         exec_name = Path(str(cls.EXECUTABLE)).name
-        cap_root = f"Software\\Classes\\Applications\\{exec_name}\\Capabilities"
+        cap_root = rf"Software\Classes\Applications\{exec_name}\Capabilities"
 
-        def _del_tree(root, subkey):
+        def _delete_tree(root, subkey: str) -> None:  # type: ignore
             with winreg.OpenKey(root, subkey, 0, winreg.KEY_ALL_ACCESS) as k:  # type: ignore
-                i = 0
                 while True:
                     try:
                         child = winreg.EnumKey(k, 0)  # type: ignore
-                        _del_tree(root, subkey + "\\" + child)  # type: ignore
+                        _delete_tree(root, f"{subkey}\\{child}")  # type: ignore
                     except OSError:
                         break
-                winreg.DeleteKey(root, subkey)
+                winreg.DeleteKey(root, subkey)  # type: ignore
 
         try:
-            _del_tree(winreg.HKEY_CURRENT_USER, cap_root)  # type: ignore
+            _delete_tree(winreg.HKEY_CURRENT_USER, cap_root)  # type: ignore
         except FileNotFoundError:
             pass
 
-        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)  # type: ignore
 
     @classmethod
     def _register_linux(cls) -> None:

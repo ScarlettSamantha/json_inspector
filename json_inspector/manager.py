@@ -13,10 +13,9 @@ class JsonManager:
         self.object_loaded_cache: int = 0
         self.gui: Gui = Gui(self)
 
+        self.gui.load()
         if self._path:
             self.load_file()
-
-        self.gui.load()
 
         if self.data is not None:
             self.gui.populate_tree()
