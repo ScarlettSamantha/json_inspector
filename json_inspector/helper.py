@@ -66,7 +66,7 @@ class Helper:
 
 class OSHelper:
     APP_ID: ClassVar[str] = "JsonInspector"
-    EXECUTABLE: ClassVar[Path] = (Path(sys.argv[0]) / ".." / "run.py").resolve()
+    EXECUTABLE: ClassVar[Path] = (Helper.base_path() / "__main__.py").resolve()
     DESKTOP_DIR: ClassVar[Path] = Path.home() / ".local" / "share" / "applications"
     DESKTOP_FILE: ClassVar[Path] = DESKTOP_DIR / f"{APP_ID}.desktop"
     MIME_TYPE: ClassVar[str] = "application/json"

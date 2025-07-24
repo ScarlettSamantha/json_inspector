@@ -299,10 +299,6 @@ class Gui(QtWidgets.QMainWindow):
             return
 
         cur_type = type_item.text()
-
-        if cur_type in {"dict", "list", "tuple", "set"}:
-            return
-
         cur_val = val_item.text()
         dlg = EditValueDialog(self, cur_type, cur_val)
 
