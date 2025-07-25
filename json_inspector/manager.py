@@ -27,6 +27,10 @@ class JsonManager:
     def path(self) -> str | None:
         return self._path
 
+    @path.setter
+    def path(self, value: str) -> None:
+        self._path = value
+
     def start_monitoring(self) -> None:
         from monitor import JsonFileMonitor
 

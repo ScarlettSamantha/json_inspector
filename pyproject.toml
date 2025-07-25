@@ -6,6 +6,16 @@ bundle = "nl.scarlettbytes.json-inspector"
 author = "Scarlett Samantha Verheul"
 author_email = "scarlett.verheul@gmail.com"
 
+[tool.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-qt",
+  "pytest-cov",
+  "typeguard",
+  "mypy",
+
+]
+
 [tool.briefcase.app.json-inspector.windows]
 use_full_install_path = false
 
@@ -62,3 +72,12 @@ skips = ["B311", "B301", "B101", "B403"]
 log.level = "INFO"
 log.stack-trace = true
 rules = ["MD013"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-q --tb=short"
+testpaths = ["./tests"]
+
+[tool.setuptools.packages.find]
+where = ["json_inspector"]
+include = ["json_inspector*"]

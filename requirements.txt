@@ -3,3 +3,6 @@ PyQt6-sip
 ujson
 psutil
 watchdog
+pytest
+pytest-qt
+pytest-cov
