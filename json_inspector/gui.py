@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from manager import JsonManager
 
 from PyQt6 import QtWidgets, QtGui, QtCore
+from PyQt6.QtCore import QModelIndex
 
 COLOR_MAP: Dict[str, str] = {
     "int": "#b58900",
@@ -70,6 +71,7 @@ class Gui(QtWidgets.QMainWindow):
         assert menu_bar is not None, "Menu bar should not be None"
 
         file_menu: QtWidgets.QMenu | None = menu_bar.addMenu("File")
+        view_menu: QtWidgets.QMenu | None = menu_bar.addMenu("View")
         settings_menu: QtWidgets.QMenu | None = menu_bar.addMenu("Settings")
         about_menu: QtWidgets.QMenu | None = menu_bar.addMenu("About")
 
@@ -92,6 +94,25 @@ class Gui(QtWidgets.QMainWindow):
         exit_action: QtGui.QAction | None = file_menu.addAction("Exit")  # type: ignore
         exit_action.setShortcut("Ctrl+Q")  # type: ignore
         exit_action.triggered.connect(self.close)  # type: ignore
+
+        assert view_menu is not None, "View menu should not be None"
+
+        reload_action: QtGui.QAction | None = view_menu.addAction("Reload")  # type: ignore
+        reload_action.setShortcut("Ctrl+R")  # type: ignore
+        reload_action.triggered.connect(self.reload)  # type: ignore
+
+        clear_action: QtGui.QAction | None = view_menu.addAction("Clear")  # type: ignore
+        clear_action.setShortcut("Ctrl+Alt+C")  # type: ignore # We use Ctrl+Alt+C to avoid issues when terminal people who use Ctrl+Shift+C as copy.
+        clear_action.triggered.connect(self.clear)  # type: ignore
+
+        view_menu.addSeparator()
+
+        expand_all_action: QtGui.QAction | None = view_menu.addAction("Expand All")  # type: ignore
+        expand_all_action.triggered.connect(lambda: self.tree.expandRecursively(QModelIndex(), 20))  # type: ignore
+
+        collapse_all_action: QtGui.QAction | None = view_menu.addAction("Collapse All")  # type: ignore
+        collapse_all_action.setShortcut("Ctrl+Shift+E")  # type: ignore
+        collapse_all_action.triggered.connect(lambda: self.tree.collapseAll())  # type: ignore
 
         settings_action: QtGui.QAction | None = settings_menu.addAction("Settings…")  # type: ignore
         settings_action.setShortcut("Ctrl+P")  # type: ignore

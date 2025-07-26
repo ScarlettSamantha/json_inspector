@@ -1,6 +1,6 @@
 [tool.briefcase]
 project_name = "Json Inspector"
-version = "0.3.2"
+version = "0.3.3"
 package = "nl.scarlettbytes.json-inspector"
 bundle = "nl.scarlettbytes.json-inspector"
 author = "Scarlett Samantha Verheul"
