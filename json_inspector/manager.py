@@ -1,12 +1,12 @@
 import json
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 from gui import Helper
 import gc
 from gui import Gui
-from json_inspector.monitor import FileEvent
 
-if TYPE_CHECKING:
-    from monitor import JsonFileMonitor
+from monitor import FileEvent
+from settings import Settings
+from monitor import JsonFileMonitor
 
 
 class JsonManager:
@@ -15,6 +15,8 @@ class JsonManager:
         self.data: Dict[str | int | float, Any] | None = None
         self.object_loaded_cache: int = 0
         self.gui: Gui = Gui(self)
+        self.settings: Type[Settings] = Settings
+        self.settings.setup()
 
         self.gui.load()
         if self._path:
@@ -22,6 +24,8 @@ class JsonManager:
 
         if self.data is not None:
             self.gui.populate_tree()
+
+        self._monitor: JsonFileMonitor | None = None
 
     def load_file(self):
         self.load()
@@ -35,13 +39,17 @@ class JsonManager:
         self._path = value
 
     def start_monitoring(self) -> None:
-        from monitor import JsonFileMonitor
+        if self._path is None:
+            return
 
-        self._monitor: JsonFileMonitor = JsonFileMonitor(self)
+        if not hasattr(self, "_monitor") or self._monitor is None:
+            self._monitor = JsonFileMonitor(self)
+
         self._monitor.register_callback(self.handle_file_change)
+        self._monitor.start()
 
     def stop_monitoring(self) -> None:
-        if hasattr(self, "_monitor"):
+        if hasattr(self, "_monitor") and self._monitor is not None:
             self._monitor.stop_monitoring()
             del self._monitor
 
@@ -76,7 +84,7 @@ class JsonManager:
                 raise OSError(f"Failed to read JSON file {self._path}: {e}")
         gc.collect()
 
-        if activate_monitor:
+        if activate_monitor and self.settings.monitoring_enabled():
             self.start_monitoring()
 
     def save(self, path: str) -> None:
@@ -97,10 +105,10 @@ class JsonManager:
         gc.collect()
 
     def is_monitoring(self) -> bool:
-        return hasattr(self, "_monitor") and self._monitor.is_observer_running
+        return hasattr(self, "_monitor") and self._monitor is not None and self._monitor.is_observer_running
 
     def get_monitor(self) -> "JsonFileMonitor":
-        if not hasattr(self, "_monitor"):
+        if not hasattr(self, "_monitor") or self._monitor is None:
             raise RuntimeError("Manager does not have a monitor.")
         return self._monitor
 

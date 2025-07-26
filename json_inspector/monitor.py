@@ -19,11 +19,13 @@ class FileEvent(Enum):
 class JsonFileMonitor:
     NO_OBSERVER_ERRORS = -1
     OBSERVER_INOTIFY_INSTANCE_LIMIT_ERROR = 24
+    OBSERVER_INOTIFY_NO_SPACE_ERROR = 28
 
     def __init__(self, manager: "JsonManager") -> None:
         self.manager: "JsonManager" = manager
 
-        assert manager.path is not None, "Path must be set before initializing the monitor."
+        if manager.path is None:
+            raise ValueError("The manager's path cannot be None.")
 
         self._path: str = manager.path
 
@@ -33,9 +35,10 @@ class JsonFileMonitor:
         self.is_observer_running: bool = False
         self.is_not_running_due_error: int = self.NO_OBSERVER_ERRORS
 
-        event_handler = JsonFileEventHandler(self)
+        self.event_handler = JsonFileEventHandler(self)
 
-        self._observer.schedule(event_handler, str(Path(self._path).resolve()), recursive=False)
+    def start(self) -> None:
+        self._observer.schedule(self.event_handler, str(Path(self._path).resolve()), recursive=False)
         self._observer.daemon = True
         try:
             self._observer.start()

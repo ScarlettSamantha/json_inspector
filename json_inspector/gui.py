@@ -148,7 +148,7 @@ class Gui(QtWidgets.QMainWindow):
         assert settings_action is not None, "Settings action should not be None"
 
         settings_action.setShortcut("Ctrl+P")
-        settings_action.triggered.connect(lambda: SettingsDialog(self).exec())  # type: ignore
+        settings_action.triggered.connect(lambda: SettingsDialog(self.manager, self).exec())  # type: ignore
 
         about_action = about_menu.addAction("About")  # type: ignore
         about_action.triggered.connect(self.show_about_dialog)  # type: ignore
@@ -227,9 +227,15 @@ class Gui(QtWidgets.QMainWindow):
             self.file_monitor_label.setText("Monitoring: Enabled")
             self.file_monitor_label.setStyleSheet("color: green;")
         else:
-            if self.get_monitor().is_not_running_due_error == JsonFileMonitor.NO_OBSERVER_ERRORS:
+            if (
+                not hasattr(self, "_monitor")
+                or self.get_monitor().is_not_running_due_error == JsonFileMonitor.NO_OBSERVER_ERRORS
+            ):
                 self.file_monitor_label.setText("Monitoring: Disabled")
-                self.file_monitor_label.setStyleSheet("color: purple;")
+                if self.manager.settings.monitoring_enabled():
+                    self.file_monitor_label.setStyleSheet("color: green;")
+                else:
+                    self.file_monitor_label.setStyleSheet("color: purple;")
             else:
                 self.file_monitor_label.setText(
                     f"Monitoring: Disabled (Error[{str(self.get_monitor().is_not_running_due_error)}] occurred)"
@@ -240,6 +246,12 @@ class Gui(QtWidgets.QMainWindow):
                         f"Error code: {self.get_monitor().is_not_running_due_error}. "
                         "This might be due to too many inotify watches. "
                         "You can increase the limit by running 'sudo sysctl fs.inotify.max_user_watches=524288' and then 'sudo sysctl -p'."
+                    )
+                elif self.get_monitor().is_not_running_due_error == JsonFileMonitor.OBSERVER_INOTIFY_NO_SPACE_ERROR:
+                    self.file_monitor_label.setToolTip(
+                        f"Error code: {self.get_monitor().is_not_running_due_error}. "
+                        "This is likely due to running out of space for inotify watches. "
+                        "You can increase the limit by running 'sudo sysctl fs.inotify.max_user_instances=1024' and then 'sudo sysctl -p'."
                     )
                 else:
                     self.file_monitor_label.setToolTip(
