@@ -80,32 +80,52 @@ class Gui(QtWidgets.QMainWindow):
 
         assert file_menu is not None, "File menu should not be None"
 
-        open_action: QtGui.QAction | None = file_menu.addAction("Open…")  # type: ignore
-        open_action.setShortcut("Ctrl+O")  # type: ignore
+        open_action: QtGui.QAction | None = file_menu.addAction(text="Open…")  # type: ignore
+
+        assert open_action is not None, "Open action should not be None"
+
+        open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self.open_file)  # type: ignore
 
         save_action: QtGui.QAction | None = file_menu.addAction("Save")  # type: ignore
-        save_action.setShortcut("Ctrl+S")  # type: ignore
+
+        assert save_action is not None, "Save action should not be None"
+
+        save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._save_file)  # type: ignore
 
         save_as_action: QtGui.QAction | None = file_menu.addAction("Save As…")  # type: ignore
-        save_as_action.setShortcut("Ctrl+Shift+S")  # type: ignore
+
+        assert save_as_action is not None, "Save As action should not be None"
+
+        save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._save_as_file)  # type: ignore
 
         file_menu.addSeparator()
 
         exit_action: QtGui.QAction | None = file_menu.addAction("Exit")  # type: ignore
-        exit_action.setShortcut("Ctrl+Q")  # type: ignore
+
+        assert exit_action is not None, "Exit action should not be None"
+
+        exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)  # type: ignore
 
         assert view_menu is not None, "View menu should not be None"
 
         reload_action: QtGui.QAction | None = view_menu.addAction("Reload")  # type: ignore
-        reload_action.setShortcut("Ctrl+R")  # type: ignore
+
+        assert reload_action is not None, "Reload action should not be None"
+
+        reload_action.setShortcut("Ctrl+R")
         reload_action.triggered.connect(self.reload)  # type: ignore
 
         clear_action: QtGui.QAction | None = view_menu.addAction("Clear")  # type: ignore
-        clear_action.setShortcut("Ctrl+Alt+C")  # type: ignore # We use Ctrl+Alt+C to avoid issues when terminal people who use Ctrl+Shift+C as copy.
+
+        assert clear_action is not None, "Clear action should not be None"
+
+        clear_action.setShortcut(
+            "Ctrl+Alt+C"
+        )  # We use Ctrl+Alt+C to avoid issues when terminal people who use Ctrl+Shift+C as copy.
         clear_action.triggered.connect(self.clear)  # type: ignore
 
         view_menu.addSeparator()
@@ -114,11 +134,17 @@ class Gui(QtWidgets.QMainWindow):
         expand_all_action.triggered.connect(lambda: self.tree.expandRecursively(QModelIndex(), 20))  # type: ignore
 
         collapse_all_action: QtGui.QAction | None = view_menu.addAction("Collapse All")  # type: ignore
-        collapse_all_action.setShortcut("Ctrl+Shift+E")  # type: ignore
+
+        assert collapse_all_action is not None, "Collapse All action should not be None"
+
+        collapse_all_action.setShortcut("Ctrl+Shift+E")
         collapse_all_action.triggered.connect(lambda: self.tree.collapseAll())  # type: ignore
 
         settings_action: QtGui.QAction | None = settings_menu.addAction("Settings…")  # type: ignore
-        settings_action.setShortcut("Ctrl+P")  # type: ignore
+
+        assert settings_action is not None, "Settings action should not be None"
+
+        settings_action.setShortcut("Ctrl+P")
         settings_action.triggered.connect(lambda: SettingsDialog(self).exec())  # type: ignore
 
         about_action = about_menu.addAction("About")  # type: ignore
@@ -212,7 +238,7 @@ class Gui(QtWidgets.QMainWindow):
             else:
                 try:
                     obj = obj[int(key)]  # type: ignore[index]
-                except (IndexError, TypeError):
+                except:
                     pass
             t: str = type(obj).__name__ if obj is not None else "NoneType"  # type: ignore
             color: str = COLOR_MAP.get(t, "#000000")
