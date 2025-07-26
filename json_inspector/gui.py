@@ -2,26 +2,29 @@ import json
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple, Union
 from edit_value_dialog import EditValueDialog
 from about_dialog import AboutDialog
+
 from load_children_worker import LoadChildrenWorker
 from settings_dialog import SettingsDialog
 from helper import Helper, OSHelper
 from search import Search
+from monitor import JsonFileMonitor
 
 if TYPE_CHECKING:
     from manager import JsonManager
+
 
 from PyQt6 import QtWidgets, QtGui, QtCore
 from PyQt6.QtCore import QModelIndex
 
 COLOR_MAP: Dict[str, str] = {
-    "int": "#b58900",
-    "float": "#2aa198",
+    "int": "#00a9b5",
+    "float": "#2a54a1",
     "bool": "#d33682",
     "str": "#859900",
     "NoneType": "#657b83",
     "dict": "#dc322f",
-    "list": "#dc322f",
-    "tuple": "#dc322f",
+    "list": "#ff9900",
+    "tuple": "#fffb00",
     "set": "#dc322f",
 }
 
@@ -80,7 +83,7 @@ class Gui(QtWidgets.QMainWindow):
 
         assert file_menu is not None, "File menu should not be None"
 
-        open_action: QtGui.QAction | None = file_menu.addAction(text="Open…")  # type: ignore
+        open_action: QtGui.QAction | None = file_menu.addAction("Open…")  # type: ignore
 
         assert open_action is not None, "Open action should not be None"
 
@@ -198,13 +201,47 @@ class Gui(QtWidgets.QMainWindow):
         self.path_label = QtWidgets.QLabel("")
         self.footer.addPermanentWidget(self.path_label, stretch=1)
 
+        self.file_monitor_label = QtWidgets.QLabel("Monitoring: No file Loaded")
+        self.footer.addPermanentWidget(self.file_monitor_label)
+
         self.memory_usage_label = QtWidgets.QLabel(f"Memory Usage: {OSHelper.get_memory_usage_human()}")
         self.footer.addPermanentWidget(self.memory_usage_label)
+
+    def get_monitor(self) -> "JsonFileMonitor":
+        if not hasattr(self.manager, "_monitor"):
+            raise RuntimeError("Manager does not have a monitor.")
+        return self.manager.get_monitor()
 
     def update_footer(self) -> None:
         total = self.manager.get_total_count(cache=True)
         self.loaded_label.setText(f"Loaded {total} items")
         self.memory_usage_label.setText(f"Memory Usage: {OSHelper.get_memory_usage_human()}")
+
+        if self.manager.path is None:
+            self.file_monitor_label.setText("Monitoring: No file Loaded")
+        elif self.manager.is_monitoring():
+            self.file_monitor_label.setText("Monitoring: Enabled")
+            self.file_monitor_label.setStyleSheet("color: green;")
+        else:
+            if self.get_monitor().is_not_running_due_error == JsonFileMonitor.NO_OBSERVER_ERRORS:
+                self.file_monitor_label.setText("Monitoring: Disabled")
+                self.file_monitor_label.setStyleSheet("color: purple;")
+            else:
+                self.file_monitor_label.setText(
+                    f"Monitoring: Disabled (Error[{str(self.get_monitor().is_not_running_due_error)}] occurred)"
+                )
+                self.file_monitor_label.setStyleSheet("color: red;")
+                if self.get_monitor().is_not_running_due_error == JsonFileMonitor.OBSERVER_INOTIFY_INSTANCE_LIMIT_ERROR:
+                    self.file_monitor_label.setToolTip(
+                        f"Error code: {self.get_monitor().is_not_running_due_error}. "
+                        "This might be due to too many inotify watches. "
+                        "You can increase the limit by running 'sudo sysctl fs.inotify.max_user_watches=524288' and then 'sudo sysctl -p'."
+                    )
+                else:
+                    self.file_monitor_label.setToolTip(
+                        f"Error code: {self.get_monitor().is_not_running_due_error}. "
+                        "This is a unknown error, please report it."
+                    )
 
     def show_about_dialog(self) -> None:
         dlg = AboutDialog(self)

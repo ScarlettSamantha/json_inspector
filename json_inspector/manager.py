@@ -1,9 +1,12 @@
 import json
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from gui import Helper
 import gc
 from gui import Gui
 from json_inspector.monitor import FileEvent
+
+if TYPE_CHECKING:
+    from monitor import JsonFileMonitor
 
 
 class JsonManager:
@@ -92,6 +95,14 @@ class JsonManager:
         self._path = None
         self.object_loaded_cache = 0
         gc.collect()
+
+    def is_monitoring(self) -> bool:
+        return hasattr(self, "_monitor") and self._monitor.is_observer_running
+
+    def get_monitor(self) -> "JsonFileMonitor":
+        if not hasattr(self, "_monitor"):
+            raise RuntimeError("Manager does not have a monitor.")
+        return self._monitor
 
     def get_total_count(self, cache: bool = True) -> int:
         if cache:
