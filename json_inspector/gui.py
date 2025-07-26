@@ -63,6 +63,9 @@ class Gui(QtWidgets.QMainWindow):
 
         self.tree.itemExpanded.connect(self._on_item_expanded)  # type: ignore
 
+        self.tree.itemClicked.connect(self._on_path_item_clicked)  # type: ignore
+        self.prop_table.itemClicked.connect(self._on_path_prop_clicked)  # type: ignore
+
         self.populate_tree()
 
     def _build_ui(self) -> None:
@@ -164,7 +167,10 @@ class Gui(QtWidgets.QMainWindow):
         self.setStatusBar(self.footer)
 
         self.loaded_label = QtWidgets.QLabel(f"Loaded {self.manager.get_total_count()} items")
-        self.footer.addWidget(self.loaded_label, 1)
+        self.footer.addWidget(self.loaded_label)
+
+        self.path_label = QtWidgets.QLabel("")
+        self.footer.addPermanentWidget(self.path_label, stretch=1)
 
         self.memory_usage_label = QtWidgets.QLabel(f"Memory Usage: {OSHelper.get_memory_usage_human()}")
         self.footer.addPermanentWidget(self.memory_usage_label)
@@ -187,6 +193,50 @@ class Gui(QtWidgets.QMainWindow):
             root.addChild(placeholder)
             root.setChildIndicatorPolicy(QtWidgets.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
         self.tree.expandItem(root)
+
+    def _on_path_item_clicked(self, item: QtWidgets.QTreeWidgetItem, col: int) -> None:
+        path: List[Any] = []
+        tmp: QtWidgets.QTreeWidgetItem | None = item
+        while tmp and tmp.parent():
+            path.insert(0, tmp.text(0))
+            tmp = tmp.parent()
+        path.insert(0, "root")
+        self._update_footer_path(path)
+
+    def _update_footer_path(self, path: List[str]) -> None:
+        parts: List[Any] = []
+        obj: Dict[str | int | float, Any] | None = self.manager.data
+        for key in path:
+            if isinstance(obj, dict):
+                obj = obj.get(key, obj)  # type: ignore
+            else:
+                try:
+                    obj = obj[int(key)]  # type: ignore[index]
+                except (IndexError, TypeError):
+                    pass
+            t: str = type(obj).__name__ if obj is not None else "NoneType"  # type: ignore
+            color: str = COLOR_MAP.get(t, "#000000")
+            parts.append(f"<span style='color:{color}'>{key}</span>")
+        html = " &gt; ".join(parts)
+        self.path_label.setText(html)
+
+    def _on_path_prop_clicked(self, item: QtWidgets.QTableWidgetItem) -> None:
+        sel: List[QtWidgets.QTreeWidgetItem] = self.tree.selectedItems()
+        if not sel:
+            return
+        item_tree: QtWidgets.QTreeWidgetItem = sel[0]
+        path: List[Any] = []
+        tmp = item_tree
+        while tmp and tmp.parent():
+            path.insert(0, tmp.text(0))
+            tmp: QtWidgets.QTreeWidgetItem | None = tmp.parent()
+
+        path.insert(0, "root")
+
+        row = item.row()
+        key = self.prop_table.item(row, 0).text()  # type: ignore
+        path.append(key)
+        self._update_footer_path(path)
 
     def _current_obj_from_item(self, item: QtWidgets.QTreeWidgetItem) -> Any:
         keys: List[Union[str, int]] = []
