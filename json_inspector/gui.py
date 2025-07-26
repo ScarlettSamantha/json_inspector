@@ -183,15 +183,19 @@ class Gui(QtWidgets.QMainWindow):
         self.tree.setHeaderLabels(["Key", "Type"])  # type: ignore
         self.tree.header().resizeSection(0, 300)  # type: ignore
         self.tree.itemSelectionChanged.connect(slot=self._on_select)  # type: ignore
+
         splitter.addWidget(self.tree)
 
         self.prop_table = QtWidgets.QTableWidget()
-        self.prop_table.setColumnCount(3)
-        self.prop_table.setHorizontalHeaderLabels(["Key", "Type", "Value"])  # type: ignore
+        self.prop_table.setColumnCount(4)
+        self.prop_table.setHorizontalHeaderLabels(["Key", "Type", "Value", "Raw"])  # type: ignore
+        self.prop_table.setColumnHidden(3, True)
         self.prop_table.horizontalHeader().setStretchLastSection(True)  # type: ignore
         self.prop_table.itemDoubleClicked.connect(self._on_prop_double_click)  # type: ignore
+
         splitter.addWidget(self.prop_table)
         splitter.setSizes([500, 1000])  #    type: ignore
+
         self.footer = QtWidgets.QStatusBar()
         self.setStatusBar(self.footer)
 
@@ -275,7 +279,7 @@ class Gui(QtWidgets.QMainWindow):
             else:
                 try:
                     obj = obj[int(key)]  # type: ignore[index]
-                except:
+                except Exception:
                     pass
             t: str = type(obj).__name__ if obj is not None else "NoneType"  # type: ignore
             color: str = COLOR_MAP.get(t, "#000000")
@@ -402,7 +406,7 @@ class Gui(QtWidgets.QMainWindow):
                 continue
 
     def _get_obj_by_path(self, path: Tuple[Union[str, int], ...]) -> Any:
-        obj = self.manager.data
+        obj: Dict[str | int | float, Any] | None = self.manager.data
         for k in path:
             if isinstance(obj, dict):
                 obj = obj[k]  # type: ignore[index]
@@ -421,12 +425,27 @@ class Gui(QtWidgets.QMainWindow):
     def _populate_properties(self, obj: Any) -> None:
         self.prop_table.clearContents()
         self.prop_table.setRowCount(0)
+
         if isinstance(obj, dict):
             for i, (k, v) in enumerate(obj.items()):  # type: ignore
                 self.prop_table.insertRow(i)
                 self.prop_table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(k)))  # type: ignore
-                self.prop_table.setItem(i, 1, QtWidgets.QTableWidgetItem(type(v).__name__))  # type: ignore
-                self.prop_table.setItem(i, 2, QtWidgets.QTableWidgetItem(str(v)))  # type: ignore
+
+                type_name = type(v).__name__  # type: ignore
+                color = COLOR_MAP.get(type_name, "#000000")
+                item = QtWidgets.QTableWidgetItem(f"{type_name}")
+                item.setForeground(QtGui.QBrush(QtGui.QColor(color)))
+
+                self.prop_table.setItem(i, 1, item)  # type: ignore
+
+                if str(v).__len__() > 100:  # type: ignore
+                    self.prop_table.setItem(i, 2, QtWidgets.QTableWidgetItem(str(v)[:100] + "..."))  # type: ignore
+                else:
+                    self.prop_table.setItem(i, 2, QtWidgets.QTableWidgetItem(str(v)))  # type: ignore
+
+                data = QtWidgets.QTableWidgetItem()
+                data.setData(QtCore.Qt.ItemDataRole.UserRole, str(v))  # type: ignore
+                self.prop_table.setItem(i, 3, data)  # type:
 
         elif isinstance(obj, (list, tuple, set)):
             for i, v in enumerate(obj):  # type: ignore
@@ -435,24 +454,33 @@ class Gui(QtWidgets.QMainWindow):
                 self.prop_table.setItem(i, 1, QtWidgets.QTableWidgetItem(type(v).__name__))  # type: ignore
                 self.prop_table.setItem(i, 2, QtWidgets.QTableWidgetItem(str(v)))  # type: ignore
 
+                data = QtWidgets.QTableWidgetItem()
+                data.setData(QtCore.Qt.ItemDataRole.UserRole, str(v))  # type: ignore
+                self.prop_table.setItem(i, 3, data)
+
         else:
             self.prop_table.insertRow(0)
             self.prop_table.setItem(0, 0, QtWidgets.QTableWidgetItem("value"))
             self.prop_table.setItem(0, 1, QtWidgets.QTableWidgetItem(type(obj).__name__))
             self.prop_table.setItem(0, 2, QtWidgets.QTableWidgetItem(str(obj)))
 
+            data = QtWidgets.QTableWidgetItem()
+            data.setData(QtCore.Qt.ItemDataRole.UserRole, str(obj))  # type: ignore
+            self.prop_table.setItem(0, 3, data)
+
     def _on_prop_double_click(self, item: QtWidgets.QTableWidgetItem) -> None:
-        row = item.row()
+        row: int = item.row()
 
         key_item: QtWidgets.QTableWidgetItem | None = self.prop_table.item(row, 0)
         type_item: QtWidgets.QTableWidgetItem | None = self.prop_table.item(row, 1)
         val_item: QtWidgets.QTableWidgetItem | None = self.prop_table.item(row, 2)
+        data_item: QtWidgets.QTableWidgetItem | None = self.prop_table.item(row, 3)
 
-        if not key_item or not type_item or not val_item:
+        if not key_item or not type_item or not val_item or not data_item:
             return
 
-        cur_type = type_item.text()
-        cur_val = val_item.text()
+        cur_type: str = type_item.text()
+        cur_val = data_item.data(QtCore.Qt.ItemDataRole.UserRole)
         dlg = EditValueDialog(self, cur_type, cur_val)
 
         if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
@@ -461,8 +489,8 @@ class Gui(QtWidgets.QMainWindow):
             val_item.setText(str(new_val))
 
             parent_obj = self._current_obj_from_item(self.tree.selectedItems()[0])
-            key_raw = key_item.text()
-            key = int(key_raw) if isinstance(parent_obj, list) else key_raw
+            key_raw: str = key_item.text()
+            key: int | str = int(key_raw) if isinstance(parent_obj, list) else key_raw
 
             if isinstance(parent_obj, dict):
                 parent_obj[key] = new_val

@@ -121,6 +121,19 @@ class JsonManager:
         else:
             return len(Helper.prepare_items(self.data)) if self.data else 0
 
+    def get_data_from_path(self, path: Tuple[str, ...]) -> Any:
+        if self.data is None:
+            return None
+        current: Dict[str | int | float, Any] = self.data
+        for key in path:
+            if key in current:
+                current = current[key]
+            elif isinstance(current, (list, tuple)) and isinstance(key, int) and 0 <= key < len(current):
+                current = current[key]
+            else:
+                return None
+        return current
+
     def find_paths_in_data(
         self, term: str, obj: Any = None, path: Tuple[str, ...] = ()
     ) -> List[Tuple[Tuple[Union[str, int], ...], str]]:
